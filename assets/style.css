@@ -59,7 +59,7 @@ html, body {
     
     /* Position the iframe so the video area aligns with the wrapper window */
     position: absolute;
-    top: -50px;    /* Adjusted value for correct placement -60px is the height of the header */
+    top: -35px;    /* Adjusted value for correct placement -30px is the height of the header */
     left: -192px;  /* Center the video horizontally: (800-416)/2 = 192 */
 }
 
