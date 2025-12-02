@@ -1,25 +1,11 @@
-html {
-    background: #000000 !important;
-    background-color: #000000 !important;
+html, body {
     margin: 0;
     padding: 0;
     width: 100%;
     height: 100%;
-}
-
-body {
-    margin: 0;
-    padding: 0;
-    min-height: 100vh;
-    background: #000000 !important;
-    background-color: #000000 !important;
+    background: #000000;
     color: #fafbfc;
     font-family: 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', sans-serif;
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    width: 100vw;
-    height: 100vh;
     overflow: hidden;
 }
 
@@ -30,49 +16,55 @@ body {
     justify-content: center;
     width: 100vw;
     height: 100vh;
-    overflow: hidden;
-    background: #000000 !important;
-    background-color: #000000 !important;
+    background: #000000;
 }
 
 #videoFeedContainer {
     display: flex;
     justify-content: center;
     align-items: center;
-    width: 100vw;
-    height: 100vh;
-    background: #000000 !important;
-    background-color: #000000 !important;
+    background: #000000;
 }
 
-iframe, canvas {
-    display: block;
-    width: 100vw;
-    height: 100vh;
-    max-width: 100vw;
-    max-height: 100vh;
-    background: #000000 !important;
-    background-color: #000000 !important;
-    border-radius: 0;
-    box-shadow: none;
-    border: none;
-    object-fit: contain;
+/* 
+ * Iframe clipping technique:
+ * The Edge Impulse /embed page has UI chrome around the video.
+ * We use a wrapper with overflow:hidden to show only the video portion.
+ * 
+ * The video is 416x416 pixels (YOLO detection size).
+ * Adjust these values if your video size differs.
+ * 
+ * The iframe is made larger and positioned with negative margins
+ * to shift the video into the visible clipping area.
+ */
+
+#iframe-wrapper {
+    display: none;
+    width: 416px;
+    height: 416px;
+    overflow: hidden;
+    position: relative;
+    background: #000000;
+    border-radius: 8px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
 }
 
 #dynamicIframe {
-    background: #000000 !important;
-    background-color: #000000 !important;
+    /* Make iframe large enough to contain the full embed page */
+    width: 800px;
+    height: 900px;
+    border: none;
+    background: #000000;
+    
+    /* Position the iframe so the video area aligns with the wrapper window */
+    /* These values may need adjustment based on the actual embed layout */
+    /* Negative values shift the iframe up and left */
+    position: absolute;
+    top: -60px;   /* Adjust to hide the header */
+    left: -192px;  /* Adjust to center the video horizontally: (800-416)/2 = 192 */
 }
 
-/* Responsive: maintain aspect ratio on smaller screens */
-@media (max-width: 650px) {
-    iframe, canvas {
-        width: 100vw;
-        height: 75vw; /* Maintain 4:3 aspect ratio on mobile */
-        max-height: 100vh;
-    }
-}
-
+/* Placeholder styling */
 .camera-status {
     display: flex;
     flex-direction: column;
@@ -80,8 +72,16 @@ iframe, canvas {
     align-items: center;
     gap: 18px;
     color: #adbac7;
-    background: #000000 !important;
-    background-color: #000000 !important;
+    width: 416px;
+    height: 416px;
+    background: #111111;
+    border-radius: 8px;
+}
+
+.camera-status img {
+    width: 64px;
+    height: 64px;
+    opacity: 0.5;
 }
 
 .feedback-text {
@@ -99,5 +99,23 @@ iframe, canvas {
     color: #fff;
     font-weight: 500;
     text-align: center;
-    display: none;
+}
+
+/* Responsive scaling for smaller screens */
+@media (max-width: 500px) {
+    #iframe-wrapper {
+        width: 100vw;
+        height: 100vw;
+        max-width: 416px;
+        max-height: 416px;
+        border-radius: 0;
+    }
+    
+    .camera-status {
+        width: 100vw;
+        height: 100vw;
+        max-width: 416px;
+        max-height: 416px;
+        border-radius: 0;
+    }
 }

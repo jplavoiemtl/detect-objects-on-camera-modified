@@ -5,35 +5,25 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Video Object Detection Arduino Q</title>
     <link rel="stylesheet" type="text/css" href="style.css">
-    <style>
-        html, body {
-            background: #000000 !important;
-            background-color: #000000 !important;
-        }
-        #video-container, #videoFeedContainer {
-            background: #000000 !important;
-            background-color: #000000 !important;
-        }
-        iframe {
-            background: #000000 !important;
-            background-color: #000000 !important;
-        }
-    </style>
 </head>
-<body style="background: #000000; background-color: #000000;">
+<body>
     <div id="video-container">
         <div id="videoFeedContainer">
-                <div id="videoPlaceholder" class="camera-status">
-                    <img src="./img/no-face.svg" alt="Searching webcam">
-                    <p class="feedback-text">Searching Webcam...</p>
-                </div>
-                <iframe id="dynamicIframe" title="Video stream" style="border: none; display: none; background: #000000; background-color: #000000;"></iframe>
+            <div id="videoPlaceholder" class="camera-status">
+                <img src="./img/no-face.svg" alt="Searching webcam">
+                <p class="feedback-text">Searching Webcam...</p>
+            </div>
+            <!-- Wrapper clips the iframe to show only the video -->
+            <div id="iframe-wrapper">
+                <iframe id="dynamicIframe" title="Video stream"></iframe>
             </div>
         </div>
     </div>
     <div id="error-container" class="error-message" style="display: none;"></div>
+    
     <script>
         const iframe = document.getElementById('dynamicIframe');
+        const iframeWrapper = document.getElementById('iframe-wrapper');
         const placeholder = document.getElementById('videoPlaceholder');
         const currentHostname = window.location.hostname;
         const targetPort = 4912;
@@ -47,17 +37,14 @@
                 clearInterval(intervalId);
             }
             placeholder.style.display = 'none';
-            iframe.style.display = 'block';
-            iframe.style.background = '#000000';
-            iframe.style.backgroundColor = '#000000';
+            iframeWrapper.style.display = 'block';
         };
 
         const startLoading = () => {
-            // Set the src to start loading
             iframe.src = streamUrl;
         };
 
-        intervalId = setInterval(startLoading, 1000); // Try to load every second
+        intervalId = setInterval(startLoading, 1000);
     </script>
     <script src="libs/socket.io.min.js"></script>
     <script src="app.js"></script>
