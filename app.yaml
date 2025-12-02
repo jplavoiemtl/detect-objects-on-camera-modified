@@ -1,6 +1,11 @@
 name: Detect Objects on Camera modified
 description: This example showcases object detection within a live feed from a USB camera.
 ports: []
+
+dependencies:
+  python:
+    - paho-mqtt
+
 bricks:
 - arduino:video_object_detection: {}
 - arduino:web_ui: {}
