@@ -14,16 +14,16 @@ void setLedState(bool state) {
 void setup() {
   pinMode(ledPin, OUTPUT);
 
-  // LED éteinte au démarrage
+  // LED OFF at startup
   digitalWrite(ledPin, HIGH);
 
   Bridge.begin();
   Monitor.begin();
   Bridge.provide("setLedState", setLedState);
 
-  Monitor.println("[C++] setup terminé, LED à OFF");
+  Monitor.println("[C++] setup done, LED is OFF");
 }
 
-void loop() {
+void loop() {  
   delay(10);
 }

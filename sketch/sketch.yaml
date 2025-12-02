@@ -1,6 +1,7 @@
 profiles:
   default:
-    fqbn: arduino:zephyr:unoq
+    # Fully Qualified Board Name for Arduino UNO Q (correct ID)
+    fqbn: arduino:zephyr:uno-q
     platforms:
       - platform: arduino:zephyr
     libraries:

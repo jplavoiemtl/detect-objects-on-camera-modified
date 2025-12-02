@@ -5,15 +5,29 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Video Object Detection Arduino Q</title>
     <link rel="stylesheet" type="text/css" href="style.css">
+    <style>
+        html, body {
+            background: #000000 !important;
+            background-color: #000000 !important;
+        }
+        #video-container, #videoFeedContainer {
+            background: #000000 !important;
+            background-color: #000000 !important;
+        }
+        iframe {
+            background: #000000 !important;
+            background-color: #000000 !important;
+        }
+    </style>
 </head>
-<body>
+<body style="background: #000000; background-color: #000000;">
     <div id="video-container">
         <div id="videoFeedContainer">
                 <div id="videoPlaceholder" class="camera-status">
                     <img src="./img/no-face.svg" alt="Searching webcam">
                     <p class="feedback-text">Searching Webcam...</p>
                 </div>
-                <iframe id="dynamicIframe" title="Video stream" style="border: none; display: none;"></iframe>
+                <iframe id="dynamicIframe" title="Video stream" style="border: none; display: none; background: #000000; background-color: #000000;"></iframe>
             </div>
         </div>
     </div>
@@ -34,6 +48,8 @@
             }
             placeholder.style.display = 'none';
             iframe.style.display = 'block';
+            iframe.style.background = '#000000';
+            iframe.style.backgroundColor = '#000000';
         };
 
         const startLoading = () => {

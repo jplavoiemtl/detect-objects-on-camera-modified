@@ -5,7 +5,7 @@ from threading import Timer
 import time
 
 # Configuration
-DEBOUNCE_SECONDS = 30
+DEBOUNCE_SECONDS = 60
 DETECTION_CONFIDENCE = 0.6
 
 # Components

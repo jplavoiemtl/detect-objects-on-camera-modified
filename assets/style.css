@@ -1,8 +1,18 @@
+html {
+    background: #000000 !important;
+    background-color: #000000 !important;
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+}
+
 body {
     margin: 0;
     padding: 0;
     min-height: 100vh;
-    background: #181d25;
+    background: #000000 !important;
+    background-color: #000000 !important;
     color: #fafbfc;
     font-family: 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', sans-serif;
     display: flex;
@@ -21,6 +31,8 @@ body {
     width: 100vw;
     height: 100vh;
     overflow: hidden;
+    background: #000000 !important;
+    background-color: #000000 !important;
 }
 
 #videoFeedContainer {
@@ -29,6 +41,8 @@ body {
     align-items: center;
     width: 100vw;
     height: 100vh;
+    background: #000000 !important;
+    background-color: #000000 !important;
 }
 
 iframe, canvas {
@@ -37,11 +51,17 @@ iframe, canvas {
     height: 100vh;
     max-width: 100vw;
     max-height: 100vh;
-    background: #282c34;
+    background: #000000 !important;
+    background-color: #000000 !important;
     border-radius: 0;
     box-shadow: none;
     border: none;
     object-fit: contain;
+}
+
+#dynamicIframe {
+    background: #000000 !important;
+    background-color: #000000 !important;
 }
 
 /* Responsive: maintain aspect ratio on smaller screens */
@@ -60,6 +80,8 @@ iframe, canvas {
     align-items: center;
     gap: 18px;
     color: #adbac7;
+    background: #000000 !important;
+    background-color: #000000 !important;
 }
 
 .feedback-text {
