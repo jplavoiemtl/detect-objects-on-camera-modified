@@ -47,7 +47,7 @@ def schedule_led_timeout():
 
 
 def on_detections(detections: dict):
-    """Handle detections: print all objects, turn LED on for bottles, schedule auto-off."""
+    """Handle detections: print all objects, turn LED on for bottles, extend timeout on each detection."""
     global last_detection_time
     current_time = time.time()
     
@@ -58,10 +58,12 @@ def on_detections(detections: dict):
     
     # Bottle-specific logic
     bottle = detections.get("bottle") or detections.get("Bottle")
-    if bottle and current_time - last_detection_time >= DEBOUNCE_SECONDS:
+    if bottle:
         last_detection_time = current_time
+        # Turn LED on if not already on
         if not led_on:
             set_led(True)
+        # Reset the timeout timer - this extends the delay each time a bottle is detected
         schedule_led_timeout()
 
 
