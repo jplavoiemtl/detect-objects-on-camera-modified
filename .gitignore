@@ -10,3 +10,4 @@ dist/
 .idea/
 .DS_Store
 Thumbs.db
+mqtt_secrets.py

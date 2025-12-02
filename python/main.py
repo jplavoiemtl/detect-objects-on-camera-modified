@@ -49,14 +49,14 @@ def heartbeat():
             }),
             retain=True
         )
-        time.sleep(30)
+        time.sleep(60)
 
 threading.Thread(target=heartbeat, daemon=True).start()
 
 # Configuration
 DEBOUNCE_SECONDS = 60
 DETECTION_CONFIDENCE = 0.6
-DETECTION_LABEL = "bottle"     # change this to "bottle", "car", etc.
+DETECTION_LABEL = "bottle"     # change this to "bottle", "car", "person", etc.
 
 # Components
 ui = WebUI()
@@ -142,6 +142,7 @@ def on_detections(detections: dict):
             }
 
             mqtt_client.publish(MQTT_DETECTION_TOPIC, json.dumps(mqtt_payload))
+            print(f"✅ MQTT message published to {MQTT_DETECTION_TOPIC}: {DETECTION_LABEL} detected (confidence: {confidence:.2f})")
 
         # Reset timeout timer – extends delay on each detection
         schedule_led_timeout()
