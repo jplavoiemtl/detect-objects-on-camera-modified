@@ -32,10 +32,7 @@ html, body {
  * We use a wrapper with overflow:hidden to show only the video portion.
  * 
  * The video is 416x416 pixels (YOLO detection size).
- * Adjust these values if your video size differs.
- * 
- * The iframe is made larger and positioned with negative margins
- * to shift the video into the visible clipping area.
+ * We scale it up by ~1.92x to display at approximately 800x800.
  */
 
 #iframe-wrapper {
@@ -47,6 +44,10 @@ html, body {
     background: #000000;
     border-radius: 8px;
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+    
+    /* Scale up the entire wrapper and its contents to ~800x800 */
+    transform: scale(1.92);
+    transform-origin: center center;
 }
 
 #dynamicIframe {
@@ -57,11 +58,9 @@ html, body {
     background: #000000;
     
     /* Position the iframe so the video area aligns with the wrapper window */
-    /* These values may need adjustment based on the actual embed layout */
-    /* Negative values shift the iframe up and left */
     position: absolute;
-    top: -60px;   /* Adjust to hide the header */
-    left: -192px;  /* Adjust to center the video horizontally: (800-416)/2 = 192 */
+    top: -50px;    /* Adjusted value for correct placement -60px is the height of the header */
+    left: -192px;  /* Center the video horizontally: (800-416)/2 = 192 */
 }
 
 /* Placeholder styling */
@@ -76,6 +75,10 @@ html, body {
     height: 416px;
     background: #111111;
     border-radius: 8px;
+    
+    /* Scale placeholder to match video size */
+    transform: scale(1.92);
+    transform-origin: center center;
 }
 
 .camera-status img {
@@ -102,20 +105,15 @@ html, body {
 }
 
 /* Responsive scaling for smaller screens */
-@media (max-width: 500px) {
+@media (max-width: 850px) {
     #iframe-wrapper {
-        width: 100vw;
-        height: 100vw;
-        max-width: 416px;
-        max-height: 416px;
+        /* Reduce scale on smaller screens */
+        transform: scale(1.0);
         border-radius: 0;
     }
     
     .camera-status {
-        width: 100vw;
-        height: 100vw;
-        max-width: 416px;
-        max-height: 416px;
+        transform: scale(1.0);
         border-radius: 0;
     }
 }
