@@ -70,6 +70,24 @@ ui = WebUI()
 detection_stream = VideoObjectDetection(confidence=DETECTION_CONFIDENCE, debounce_sec=0.0)
 bridge = Bridge()
 
+
+def handle_confidence_override(_sid, value):
+    """Handle confidence override messages from the Web UI."""
+    global DETECTION_CONFIDENCE
+    try:
+        threshold = float(value)
+    except (TypeError, ValueError):
+        print(f"[UI] Ignoring confidence override (not a number): {value}")
+        return
+
+    if not 0.0 <= threshold <= 1.0:
+        print(f"[UI] Ignoring confidence override outside [0,1]: {threshold}")
+        return
+
+    detection_stream.override_threshold(threshold)
+    DETECTION_CONFIDENCE = threshold
+    print(f"[UI] Detection confidence updated to {threshold:.2f}")
+
 # State
 led_on = False
 last_detection_time = 0.0
@@ -160,6 +178,7 @@ def on_detections(detections: dict):
 
 
 detection_stream.on_detect_all(on_detections)
+ui.on_message("override_th", handle_confidence_override)
 
 # ================= GRACEFUL SHUTDOWN =================
 
