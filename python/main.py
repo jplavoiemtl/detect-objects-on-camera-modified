@@ -43,25 +43,21 @@ print(f"✅ MQTT connected to {SERVERMQTT}:{SERVERPORT} as {CLIENT_ID}")
 def heartbeat():
     while True:
         current_time = time.time()
-        status = "online"
-        
-        # Check if the detection loop is still running
-        if current_time - last_loop_time > WATCHDOG_THRESHOLD:
-            status = "stalled"
-            print(f"⚠️ Warning: Detection loop stalled! Last update: {int(current_time - last_loop_time)}s ago")
+        detection_age = current_time - last_detection_time
+        status = "active" if detection_age <= WATCHDOG_THRESHOLD else "idle"
 
         mqtt_client.publish(
             STATUS_TOPIC,
             json.dumps({
                 "device": CLIENT_ID,
-                "status": status,
-                "timestamp": int(current_time)
+                "status": status,  # active = recent detection; idle = no detection recently
+                "timestamp": int(current_time),
+                "last_detection_ts": int(last_detection_time),
+                "last_detection_age": int(detection_age)
             }),
             retain=True
         )
         time.sleep(60)
-
-threading.Thread(target=heartbeat, daemon=True).start()
 
 # Configuration
 DEBOUNCE_SECONDS = 60
@@ -77,8 +73,10 @@ bridge = Bridge()
 led_on = False
 last_detection_time = 0.0
 timeout_timer = None
-last_loop_time = time.time()
-WATCHDOG_THRESHOLD = 30  # Seconds to wait before considering the pipeline stalled
+WATCHDOG_THRESHOLD = 30  # Seconds since last detection to consider the system idle
+
+# Start heartbeat after state is initialized to avoid NameError in thread
+threading.Thread(target=heartbeat, daemon=True).start()
 
 
 def set_led(state: bool):
@@ -110,11 +108,8 @@ def schedule_led_timeout():
 
 def on_detections(detections: dict):
     """Handle detections: print all objects, turn LED on for bottles, extend timeout on each detection."""
-    global last_detection_time, last_loop_time
-    
-    # Update watchdog timestamp
-    last_loop_time = time.time()
-    current_time = last_loop_time
+    global last_detection_time
+    current_time = time.time()
 
     det = None
 
