@@ -57,6 +57,7 @@ def heartbeat():
             }),
             retain=True
         )
+        print(f"[HEARTBEAT] status={status} last_detection_age={int(detection_age)}s payload_topic={STATUS_TOPIC}")
         time.sleep(60)
 
 # Configuration
@@ -73,7 +74,7 @@ bridge = Bridge()
 led_on = False
 last_detection_time = 0.0
 timeout_timer = None
-WATCHDOG_THRESHOLD = 30  # Seconds since last detection to consider the system idle
+WATCHDOG_THRESHOLD = 90  # Seconds since last detection to consider the system idle
 
 # Start heartbeat after state is initialized to avoid NameError in thread
 threading.Thread(target=heartbeat, daemon=True).start()
