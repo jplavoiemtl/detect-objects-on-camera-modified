@@ -9,6 +9,8 @@ import time
 import json
 import paho.mqtt.client as mqtt  # type: ignore
 import threading
+import signal
+import sys
 
 # ================= MQTT CONFIG =================
 STATUS_TOPIC = "unoq/status"
@@ -40,12 +42,20 @@ print(f"✅ MQTT connected to {SERVERMQTT}:{SERVERPORT} as {CLIENT_ID}")
 
 def heartbeat():
     while True:
+        current_time = time.time()
+        status = "online"
+        
+        # Check if the detection loop is still running
+        if current_time - last_loop_time > WATCHDOG_THRESHOLD:
+            status = "stalled"
+            print(f"⚠️ Warning: Detection loop stalled! Last update: {int(current_time - last_loop_time)}s ago")
+
         mqtt_client.publish(
             STATUS_TOPIC,
             json.dumps({
                 "device": CLIENT_ID,
-                "status": "online",
-                "timestamp": int(time.time())
+                "status": status,
+                "timestamp": int(current_time)
             }),
             retain=True
         )
@@ -67,6 +77,8 @@ bridge = Bridge()
 led_on = False
 last_detection_time = 0.0
 timeout_timer = None
+last_loop_time = time.time()
+WATCHDOG_THRESHOLD = 30  # Seconds to wait before considering the pipeline stalled
 
 
 def set_led(state: bool):
@@ -98,8 +110,11 @@ def schedule_led_timeout():
 
 def on_detections(detections: dict):
     """Handle detections: print all objects, turn LED on for bottles, extend timeout on each detection."""
-    global last_detection_time
-    current_time = time.time()
+    global last_detection_time, last_loop_time
+    
+    # Update watchdog timestamp
+    last_loop_time = time.time()
+    current_time = last_loop_time
 
     det = None
 
@@ -149,5 +164,34 @@ def on_detections(detections: dict):
 
 
 detection_stream.on_detect_all(on_detections)
+
+# ================= GRACEFUL SHUTDOWN =================
+
+def shutdown_handler(signum, frame):
+    """Handle shutdown signals to ensure clean exit."""
+    print("\n🛑 Shutdown signal received. Cleaning up...")
+    
+    # Turn off LED
+    if led_on:
+        set_led(False)
+    
+    # Publish offline status
+    try:
+        mqtt_client.publish(
+            STATUS_TOPIC,
+            json.dumps({"device": CLIENT_ID, "status": "offline"}),
+            retain=True
+        )
+        mqtt_client.disconnect()
+        mqtt_client.loop_stop()
+        print("✅ MQTT disconnected and offline status sent.")
+    except Exception as e:
+        print(f"Error during MQTT shutdown: {e}")
+
+    sys.exit(0)
+
+# Register signal handlers
+signal.signal(signal.SIGINT, shutdown_handler)
+signal.signal(signal.SIGTERM, shutdown_handler)
 
 App.run()

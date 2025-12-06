@@ -63,7 +63,7 @@ services:
       CUSTOM_MODEL_PATH: /home/arduino/.arduino-bricks/ei-models/
       EI_OBJ_DETECTION_MODEL: /models/ootb/ei/yolo-x-nano.eim
       HOST_IP: 192.168.30.223
-      VIDEO_DEVICE: /dev/video2
+      VIDEO_DEVICE: /dev/video0
     logging:
       driver: json-file
       options:
