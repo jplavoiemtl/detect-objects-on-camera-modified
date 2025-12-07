@@ -64,6 +64,8 @@ def heartbeat():
 DEBOUNCE_SECONDS = 60
 DETECTION_CONFIDENCE = 0.6
 DETECTION_LABEL = "bottle"     # change this to "bottle", "car", "person", etc.
+detected_labels = {DETECTION_LABEL.lower()}
+labels_emitted_once = False
 
 # Components
 ui = WebUI()
@@ -87,6 +89,47 @@ def handle_confidence_override(_sid, value):
     detection_stream.override_threshold(threshold)
     DETECTION_CONFIDENCE = threshold
     print(f"[UI] Detection confidence updated to {threshold:.2f}")
+
+
+def emit_detected_labels():
+    """Broadcast the current detected label list and selected label to the UI."""
+    labels_payload = {
+        "labels": sorted(detected_labels),
+        "selected": DETECTION_LABEL.lower()
+    }
+    print(f"[DEBUG] Emitting labels: {labels_payload}")
+    try:
+        ui.send_message("labels", message=labels_payload)
+        print("[DEBUG] Labels emitted successfully")
+    except Exception as e:
+        print(f"[UI] Failed to emit labels: {e}")
+
+
+def handle_label_override(_sid, value):
+    """Handle label override from UI dropdown."""
+    global DETECTION_LABEL
+    if not isinstance(value, str):
+        print(f"[UI] Ignoring label override (not a string): {value}")
+        return
+
+    label = value.strip().lower()
+    if not label:
+        print("[UI] Ignoring label override (empty)")
+        return
+
+    if label not in detected_labels:
+        print(f"[UI] Ignoring label override (unknown): {label}")
+        return
+
+    DETECTION_LABEL = label
+    print(f"[UI] Detection label updated to '{DETECTION_LABEL}'")
+    emit_detected_labels()
+
+
+def handle_labels_request(_sid, _value):
+    """Send current detected labels list to requesting client."""
+    print(f"[DEBUG] request_labels received from client sid={_sid}")
+    emit_detected_labels()
 
 # State
 led_on = False
@@ -134,12 +177,23 @@ def on_detections(detections: dict):
 
     # Look for the label in any casing (e.g., bottle, Bottle, BOTTLE)
     # Print all detected objects with confidence percentage
+    global labels_emitted_once
+    previous_len = len(detected_labels)
     for key, value in detections.items():
         confidence_percent = value.get("confidence", 0) * 100
-        print(f"{key} (Confidence: {confidence_percent:.1f}%)")        
-        if key.lower() == DETECTION_LABEL.lower():
+        print(f"{key} (Confidence: {confidence_percent:.1f}%)")
+
+        canonical_label = key.strip().lower()
+        if canonical_label:
+            detected_labels.add(canonical_label)
+
+        # Keep the first match for the selected detection label
+        if det is None and canonical_label == DETECTION_LABEL.lower():
             det = value
-            break
+
+    if len(detected_labels) != previous_len or not labels_emitted_once:
+        emit_detected_labels()
+        labels_emitted_once = True
 
     if det:
         last_detection_time = current_time
@@ -179,6 +233,9 @@ def on_detections(detections: dict):
 
 detection_stream.on_detect_all(on_detections)
 ui.on_message("override_th", handle_confidence_override)
+ui.on_message("override_label", handle_label_override)
+ui.on_message("request_labels", handle_labels_request)
+emit_detected_labels()
 
 # ================= GRACEFUL SHUTDOWN =================
 

@@ -130,6 +130,7 @@ html, body {
     display: flex;
     align-items: center;
     gap: 10px;
+    flex-wrap: wrap;
 }
 
 #confidenceSlider {
@@ -141,6 +142,20 @@ html, body {
     min-width: 3ch;
     text-align: right;
     color: #9ecbff;
+}
+
+#labelSelect {
+    min-width: 160px;
+    padding: 6px 8px;
+    background: #111111;
+    color: #fafbfc;
+    border: 1px solid #2e3b4e;
+    border-radius: 6px;
+}
+
+#labelSelect:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
 }
 
 /* Responsive scaling for smaller screens */
