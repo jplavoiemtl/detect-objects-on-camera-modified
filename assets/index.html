@@ -40,21 +40,28 @@
         const targetPath = '/embed';
         const streamUrl = `http://${currentHostname}:${targetPort}${targetPath}`;
 
-        let intervalId;
+        let retryTimeout = null;
+        let loaded = false;
 
         iframe.onload = () => {
-            if (intervalId) {
-                clearInterval(intervalId);
+            if (retryTimeout) {
+                clearTimeout(retryTimeout);
+                retryTimeout = null;
             }
+            loaded = true;
             placeholder.style.display = 'none';
             iframeWrapper.style.display = 'block';
         };
 
-        const startLoading = () => {
+        function attemptLoad() {
+            if (loaded) return;
             iframe.src = streamUrl;
-        };
+            // Give it 5 seconds to load before retrying
+            retryTimeout = setTimeout(attemptLoad, 5000);
+        }
 
-        intervalId = setInterval(startLoading, 1000);
+        // Start loading immediately
+        attemptLoad();
     </script>
     <script src="libs/socket.io.min.js"></script>
     <script src="app.js"></script>
