@@ -11,6 +11,13 @@ import paho.mqtt.client as mqtt  # type: ignore
 import threading
 import signal
 import sys
+import os
+from datetime import datetime
+import cv2  # type: ignore
+import pytz  # type: ignore
+
+# Timezone configuration - change this to your timezone
+LOCAL_TIMEZONE = pytz.timezone('America/Montreal')
 
 # ================= MQTT CONFIG =================
 STATUS_TOPIC = "unoq/status"
@@ -66,6 +73,323 @@ DETECTION_CONFIDENCE = 0.6
 DETECTION_LABEL = "bottle"     # change this to "bottle", "car", "person", etc.
 detected_labels = {DETECTION_LABEL.lower()}
 labels_emitted_once = False
+
+# ================= DETECTION HISTORY CONFIG =================
+MAX_DETECTION_IMAGES = 40  # Maximum number of saved detection images
+IMAGE_SAVE_DEBOUNCE = 5    # Seconds between saved images to prevent rapid duplicates
+DATA_DIR = "data"
+IMAGES_DIR = os.path.join("assets", "images")  # Save to assets so WebUI can serve them
+LOG_FILE = os.path.join(DATA_DIR, "imageslist.log")
+
+# Detection history state
+detection_history = []
+last_image_save_time = 0.0
+next_detection_id = 1
+
+
+def init_data_directories():
+    """Create data directories if they don't exist."""
+    os.makedirs(DATA_DIR, exist_ok=True)
+    os.makedirs(IMAGES_DIR, exist_ok=True)
+    print(f"✅ Data directories initialized: {DATA_DIR}, {IMAGES_DIR}")
+
+
+def load_detection_history():
+    """Load existing detection history from log file on startup."""
+    global detection_history, next_detection_id
+    detection_history = []
+    
+    if not os.path.exists(LOG_FILE):
+        print("[HISTORY] No existing log file found, starting fresh")
+        return
+    
+    try:
+        with open(LOG_FILE, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    try:
+                        entry = json.loads(line)
+                        detection_history.append(entry)
+                    except json.JSONDecodeError:
+                        continue
+        
+        if detection_history:
+            # Set next ID based on highest existing ID
+            max_id = max(entry.get("id", 0) for entry in detection_history)
+            next_detection_id = max_id + 1
+        
+        print(f"✅ Loaded {len(detection_history)} detection records from history")
+    except Exception as e:
+        print(f"[HISTORY] Error loading log file: {e}")
+
+
+def save_detection_to_log(entry: dict):
+    """Append a detection entry to the log file."""
+    try:
+        with open(LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry) + "\n")
+    except Exception as e:
+        print(f"[HISTORY] Error saving to log: {e}")
+
+
+def rewrite_log_file():
+    """Rewrite the entire log file from detection_history (used after rotation)."""
+    try:
+        with open(LOG_FILE, "w", encoding="utf-8") as f:
+            for entry in detection_history:
+                f.write(json.dumps(entry) + "\n")
+    except Exception as e:
+        print(f"[HISTORY] Error rewriting log file: {e}")
+
+
+def delete_oldest_detection():
+    """Delete the oldest detection image and remove from history."""
+    if not detection_history:
+        return
+    
+    oldest = detection_history.pop(0)
+    image_path = os.path.join(IMAGES_DIR, oldest.get("filename", ""))
+    
+    try:
+        if os.path.exists(image_path):
+            os.remove(image_path)
+            print(f"[HISTORY] Deleted oldest image: {oldest.get('filename')}")
+    except Exception as e:
+        print(f"[HISTORY] Error deleting image: {e}")
+    
+    rewrite_log_file()
+
+
+# Initialize data directories and load history on startup
+init_data_directories()
+load_detection_history()
+
+# ================= FRAME CAPTURE =================
+# Video stream runs on port 4912 via Socket.IO
+VIDEO_STREAM_PORT = 4912
+VIDEO_WS_HOST = "ei-video-obj-detection-runner"  # Docker container name
+
+import numpy as np  # type: ignore
+import base64
+
+# Frame capture state
+_sio_initialized = False
+_latest_frame = None
+_sio_connected = False
+_sio_client = None
+
+
+def _setup_socketio():
+    """Set up Socket.IO client for video stream."""
+    global _sio_client, _sio_connected, _latest_frame
+    
+    try:
+        import socketio  # type: ignore
+        
+        _sio_client = socketio.Client(logger=False, engineio_logger=False)
+        
+        @_sio_client.event
+        def connect():
+            global _sio_connected
+            _sio_connected = True
+            print("[CAPTURE] ✓ Socket.IO connected to video stream")
+        
+        @_sio_client.event
+        def disconnect():
+            global _sio_connected
+            _sio_connected = False
+            print("[CAPTURE] Socket.IO disconnected")
+        
+        @_sio_client.on('*')
+        def catch_all(event, data):
+            """Catch all events to find frame data."""
+            _process_frame_data(data)
+        
+        # Common video frame event names
+        for event_name in ['frame', 'image', 'video', 'snapshot', 'data', 'stream']:
+            @_sio_client.on(event_name)
+            def on_frame_event(data, name=event_name):
+                _process_frame_data(data)
+        
+        return True
+    except ImportError:
+        print("[CAPTURE] Socket.IO client not available")
+        return False
+    except Exception as e:
+        print(f"[CAPTURE] Socket.IO setup error: {e}")
+        return False
+
+
+def _process_frame_data(data):
+    """Process incoming frame data from Socket.IO."""
+    global _latest_frame
+    try:
+        img_data = None
+        
+        if isinstance(data, bytes):
+            img_data = data
+        elif isinstance(data, dict):
+            for key in ['frame', 'image', 'data', 'img', 'jpeg', 'jpg', 'png']:
+                if key in data:
+                    img_data = data[key]
+                    break
+        elif isinstance(data, str):
+            img_data = data
+        
+        if img_data:
+            if isinstance(img_data, str):
+                if 'base64,' in img_data:
+                    img_data = img_data.split('base64,')[1]
+                img_bytes = base64.b64decode(img_data)
+            else:
+                img_bytes = img_data
+            
+            nparr = np.frombuffer(img_bytes, np.uint8)
+            frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+            if frame is not None:
+                _latest_frame = frame
+    except Exception:
+        pass
+
+
+def _connect_socketio():
+    """Connect to the video stream via Socket.IO."""
+    global _sio_client, _sio_connected
+    
+    if _sio_connected:
+        return True
+    
+    if _sio_client is None:
+        if not _setup_socketio():
+            return False
+    
+    sio_urls = [
+        f"http://{VIDEO_WS_HOST}:{VIDEO_STREAM_PORT}",
+        f"http://172.17.0.1:{VIDEO_STREAM_PORT}",
+        f"http://localhost:{VIDEO_STREAM_PORT}",
+    ]
+    
+    for url in sio_urls:
+        try:
+            print(f"[CAPTURE] Trying Socket.IO: {url}")
+            _sio_client.connect(url, wait_timeout=3)
+            time.sleep(0.5)
+            
+            if _sio_connected:
+                return True
+        except Exception as e:
+            print(f"[CAPTURE] Socket.IO connection failed for {url}: {type(e).__name__}")
+            try:
+                _sio_client.disconnect()
+            except:
+                pass
+    
+    return False
+
+
+def capture_frame():
+    """Capture a single frame from the video stream via Socket.IO."""
+    global _sio_initialized, _latest_frame
+    
+    # Connect to Socket.IO on first call
+    if not _sio_initialized:
+        _sio_initialized = True
+        print("[CAPTURE] Connecting to video stream via Socket.IO...")
+        if _connect_socketio():
+            print("[CAPTURE] Socket.IO connection established!")
+        else:
+            print("[CAPTURE] Socket.IO connection failed")
+    
+    # Return latest frame if available
+    if _latest_frame is not None:
+        return _latest_frame.copy()
+    
+    return None
+
+
+def capture_and_save_detection(label: str, confidence: float):
+    """Capture current frame and save as detection image with debounce."""
+    global last_image_save_time, next_detection_id
+    
+    current_time = time.time()
+    
+    # Check debounce
+    if current_time - last_image_save_time < IMAGE_SAVE_DEBOUNCE:
+        return None
+    
+    # Capture frame
+    frame = capture_frame()
+    if frame is None:
+        print("[CAPTURE] No frame available, skipping save")
+        return None
+    
+    # Generate timestamped filename using local timezone
+    now = datetime.now(LOCAL_TIMEZONE)
+    timestamp_str = now.strftime("%Y%m%d_%H%M%S")
+    filename = f"detection_{timestamp_str}_{next_detection_id:03d}.jpg"
+    filepath = os.path.join(IMAGES_DIR, filename)
+    
+    # Save image
+    try:
+        cv2.imwrite(filepath, frame)
+    except Exception as e:
+        print(f"[CAPTURE] Failed to save image: {e}")
+        return None
+    
+    # Create log entry
+    entry = {
+        "id": next_detection_id,
+        "filename": filename,
+        "label": label,
+        "confidence": confidence,
+        "timestamp": current_time,
+        "time_formatted": now.strftime("%d %b %Y, %H:%M:%S").lstrip("0")
+    }
+    
+    # Add to history
+    detection_history.append(entry)
+    save_detection_to_log(entry)
+    
+    # Update state
+    next_detection_id += 1
+    last_image_save_time = current_time
+    
+    # Rotate if needed
+    while len(detection_history) > MAX_DETECTION_IMAGES:
+        delete_oldest_detection()
+    
+    print(f"✅ Detection saved: {filename} ({label}, {confidence:.2f})")
+    
+    # Emit to UI
+    emit_detection_saved(entry)
+    
+    return entry
+
+
+def emit_detection_saved(entry: dict):
+    """Notify UI that a new detection was saved."""
+    payload = {
+        "entry": entry,
+        "total": len(detection_history)
+    }
+    try:
+        ui.send_message("detection_saved", message=payload)
+    except Exception as e:
+        print(f"[UI] Failed to emit detection_saved: {e}")
+
+
+def emit_history_list():
+    """Send full detection history list to UI."""
+    payload = {
+        "history": detection_history,
+        "total": len(detection_history)
+    }
+    try:
+        ui.send_message("history_list", message=payload)
+    except Exception as e:
+        print(f"[UI] Failed to emit history_list: {e}")
+
 
 # Components
 ui = WebUI()
@@ -130,6 +454,39 @@ def handle_labels_request(_sid, _value):
     """Send current detected labels list to requesting client."""
     print(f"[DEBUG] request_labels received from client sid={_sid}")
     emit_detected_labels()
+
+
+def handle_history_request(_sid, _value):
+    """Send detection history list to requesting client."""
+    print(f"[DEBUG] request_history received from client sid={_sid}")
+    emit_history_list()
+
+
+def handle_image_request(_sid, value):
+    """Send specific detection record by index."""
+    try:
+        index = int(value) if value is not None else -1
+    except (TypeError, ValueError):
+        index = -1
+    
+    if not detection_history:
+        return
+    
+    # Handle negative index (from end)
+    if index < 0:
+        index = len(detection_history) + index
+    
+    if 0 <= index < len(detection_history):
+        entry = detection_history[index]
+        payload = {
+            "entry": entry,
+            "index": index,
+            "total": len(detection_history)
+        }
+        try:
+            ui.send_message("image_data", message=payload)
+        except Exception as e:
+            print(f"[UI] Failed to emit image_data: {e}")
 
 # State
 led_on = False
@@ -197,12 +554,14 @@ def on_detections(detections: dict):
 
     if det:
         last_detection_time = current_time
+        confidence = det.get("confidence", 0)
+
+        # Capture and save detection image (debounced)
+        capture_and_save_detection(DETECTION_LABEL, confidence)
 
         # Turn LED on if not already on
         if not led_on:
             set_led(True)
-
-            confidence = det.get("confidence", 0)
 
             # Correct handling for YOLO XYXY format
             bbox_xyxy = det.get("bounding_box_xyxy", [])
@@ -235,6 +594,8 @@ detection_stream.on_detect_all(on_detections)
 ui.on_message("override_th", handle_confidence_override)
 ui.on_message("override_label", handle_label_override)
 ui.on_message("request_labels", handle_labels_request)
+ui.on_message("request_history", handle_history_request)
+ui.on_message("request_image", handle_image_request)
 emit_detected_labels()
 
 # ================= GRACEFUL SHUTDOWN =================

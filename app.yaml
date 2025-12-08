@@ -5,6 +5,10 @@ ports: []
 dependencies:
   python:
     - paho-mqtt
+    - opencv-python
+    - numpy
+    - python-socketio[client]
+    - pytz
 
 bricks:
 - arduino:video_object_detection: {}

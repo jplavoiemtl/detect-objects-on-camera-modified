@@ -5,8 +5,28 @@ const confidenceValue = document.getElementById('confidenceValue');
 const labelSelect = document.getElementById('labelSelect');
 const DEFAULT_CONFIDENCE = 0.6;
 
+// Navigation elements
+const btnLive = document.getElementById('btnLive');
+const btnLatest = document.getElementById('btnLatest');
+const btnBack = document.getElementById('btnBack');
+const btnForward = document.getElementById('btnForward');
+const positionIndicator = document.getElementById('positionIndicator');
+const detectionInfo = document.getElementById('detectionInfo');
+const infoLabel = document.getElementById('infoLabel');
+const infoConfidence = document.getElementById('infoConfidence');
+const infoTime = document.getElementById('infoTime');
+const iframeWrapper = document.getElementById('iframe-wrapper');
+const savedImageWrapper = document.getElementById('saved-image-wrapper');
+const savedImage = document.getElementById('savedImage');
+
+// History state
+let viewMode = 'live'; // 'live' | 'history'
+let historyIndex = -1; // Current position in history (0 = oldest, length-1 = newest)
+let detectionHistory = []; // Array of detection records from backend
+
 document.addEventListener('DOMContentLoaded', () => {
     initControls();
+    initNavigation();
     initSocketIO();
 });
 
@@ -31,6 +51,134 @@ function initControls() {
                 socket.emit('override_label', value);
             }
         });
+    }
+}
+
+function initNavigation() {
+    if (btnLive) {
+        btnLive.addEventListener('click', () => setLiveMode());
+    }
+    if (btnLatest) {
+        btnLatest.addEventListener('click', () => goToLatest());
+    }
+    if (btnBack) {
+        btnBack.addEventListener('click', () => goBack());
+    }
+    if (btnForward) {
+        btnForward.addEventListener('click', () => goForward());
+    }
+}
+
+function setLiveMode() {
+    viewMode = 'live';
+    historyIndex = -1;
+    
+    // Show iframe, hide saved image
+    if (iframeWrapper) iframeWrapper.style.display = 'block';
+    if (savedImageWrapper) savedImageWrapper.style.display = 'none';
+    
+    // Update UI
+    updatePositionIndicator();
+    updateButtonStates();
+    hideDetectionInfo();
+}
+
+function goToLatest() {
+    if (detectionHistory.length === 0) return;
+    
+    viewMode = 'history';
+    historyIndex = detectionHistory.length - 1;
+    
+    showHistoryImage();
+}
+
+function goBack() {
+    if (detectionHistory.length === 0) return;
+    
+    if (viewMode === 'live') {
+        // Switch to history mode at latest
+        viewMode = 'history';
+        historyIndex = detectionHistory.length - 1;
+    } else if (historyIndex > 0) {
+        historyIndex--;
+    }
+    
+    showHistoryImage();
+}
+
+function goForward() {
+    if (viewMode !== 'history' || detectionHistory.length === 0) return;
+    
+    if (historyIndex < detectionHistory.length - 1) {
+        historyIndex++;
+        showHistoryImage();
+    }
+}
+
+function showHistoryImage() {
+    if (historyIndex < 0 || historyIndex >= detectionHistory.length) return;
+    
+    const entry = detectionHistory[historyIndex];
+    
+    // Hide iframe, show saved image
+    if (iframeWrapper) iframeWrapper.style.display = 'none';
+    if (savedImageWrapper) savedImageWrapper.style.display = 'block';
+    
+    // Load the image (served from assets/images/)
+    if (savedImage && entry.filename) {
+        savedImage.src = `/images/${entry.filename}`;
+    }
+    
+    // Update detection info
+    showDetectionInfo(entry);
+    updatePositionIndicator();
+    updateButtonStates();
+}
+
+function showDetectionInfo(entry) {
+    if (!detectionInfo) return;
+    
+    detectionInfo.style.display = 'flex';
+    if (infoLabel) infoLabel.textContent = entry.label || '-';
+    if (infoConfidence) infoConfidence.textContent = entry.confidence ? `${(entry.confidence * 100).toFixed(1)}%` : '-';
+    if (infoTime) infoTime.textContent = entry.time_formatted || '-';
+}
+
+function hideDetectionInfo() {
+    if (detectionInfo) {
+        detectionInfo.style.display = 'none';
+    }
+}
+
+function updatePositionIndicator() {
+    if (!positionIndicator) return;
+    
+    if (viewMode === 'live') {
+        positionIndicator.textContent = 'Live';
+    } else {
+        positionIndicator.textContent = `${historyIndex + 1} of ${detectionHistory.length}`;
+    }
+}
+
+function updateButtonStates() {
+    // Live button active state
+    if (btnLive) {
+        btnLive.classList.toggle('active', viewMode === 'live');
+    }
+    
+    // Latest button
+    if (btnLatest) {
+        btnLatest.disabled = detectionHistory.length === 0;
+    }
+    
+    // Back button - disabled if at oldest or no history
+    if (btnBack) {
+        btnBack.disabled = detectionHistory.length === 0 || (viewMode === 'history' && historyIndex <= 0);
+    }
+    
+    // Forward button - disabled if in live mode or at newest
+    if (btnForward) {
+        btnForward.disabled = viewMode === 'live' || detectionHistory.length === 0 || historyIndex >= detectionHistory.length - 1;
     }
 }
 
@@ -93,6 +241,10 @@ function initSocketIO() {
 
         console.log('[DEBUG] Emitting request_labels');
         socket.emit('request_labels', null);
+        
+        // Request detection history
+        console.log('[DEBUG] Emitting request_history');
+        socket.emit('request_history', null);
     });
 
     socket.on('disconnect', () => {
@@ -106,7 +258,52 @@ function initSocketIO() {
         }
     });
 
-    // Preserve only overlay/canvas-related socket logic
-    // socket.on('detection', ...) — Only keep if it calls overlay/canvas code
+    // Label dropdown updates
     socket.on('labels', updateLabelDropdown);
+    
+    // History list from backend
+    socket.on('history_list', handleHistoryList);
+    
+    // New detection saved
+    socket.on('detection_saved', handleDetectionSaved);
+}
+
+function handleHistoryList(payload) {
+    console.log('[DEBUG] history_list received:', payload);
+    
+    // Support wrapped payload
+    const data = payload?.history ? payload : (payload?.message ? payload.message : {});
+    
+    if (Array.isArray(data?.history)) {
+        detectionHistory = data.history;
+    }
+    
+    updateButtonStates();
+    updatePositionIndicator();
+    console.log(`[DEBUG] Loaded ${detectionHistory.length} history entries`);
+}
+
+function handleDetectionSaved(payload) {
+    console.log('[DEBUG] detection_saved received:', payload);
+    
+    // Support wrapped payload
+    const data = payload?.entry ? payload : (payload?.message ? payload.message : {});
+    
+    if (data?.entry) {
+        detectionHistory.push(data.entry);
+        
+        // Enforce max limit on client side too (in case backend rotated)
+        while (detectionHistory.length > 40) {
+            detectionHistory.shift();
+        }
+        
+        // If viewing latest in history mode, update the view
+        if (viewMode === 'history' && historyIndex === detectionHistory.length - 2) {
+            historyIndex = detectionHistory.length - 1;
+            showHistoryImage();
+        }
+        
+        updateButtonStates();
+        updatePositionIndicator();
+    }
 }

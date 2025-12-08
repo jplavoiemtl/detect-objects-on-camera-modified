@@ -16,6 +16,18 @@
                 <option value="">No labels yet</option>
             </select>
         </div>
+        <div class="nav-row">
+            <button id="btnLive" class="nav-btn active" title="Live view">Live</button>
+            <button id="btnLatest" class="nav-btn" title="Latest detection">Latest</button>
+            <button id="btnBack" class="nav-btn" title="Previous detection" disabled>&larr; Back</button>
+            <button id="btnForward" class="nav-btn" title="Next detection" disabled>Forward &rarr;</button>
+            <span id="positionIndicator" class="position-indicator">Live</span>
+        </div>
+        <div id="detectionInfo" class="detection-info" style="display: none;">
+            <span class="info-label" id="infoLabel">-</span>
+            <span class="info-confidence" id="infoConfidence">-</span>
+            <span class="info-time" id="infoTime">-</span>
+        </div>
     </div>
     <div id="video-container">
         <div id="videoFeedContainer">
@@ -27,41 +39,48 @@
             <div id="iframe-wrapper">
                 <iframe id="dynamicIframe" title="Video stream"></iframe>
             </div>
+            <!-- Saved detection image (shown when browsing history) -->
+            <div id="saved-image-wrapper" style="display: none;">
+                <img id="savedImage" alt="Saved detection" />
+            </div>
         </div>
     </div>
     <div id="error-container" class="error-message" style="display: none;"></div>
     
     <script>
-        const iframe = document.getElementById('dynamicIframe');
-        const iframeWrapper = document.getElementById('iframe-wrapper');
-        const placeholder = document.getElementById('videoPlaceholder');
-        const currentHostname = window.location.hostname;
-        const targetPort = 4912;
-        const targetPath = '/embed';
-        const streamUrl = `http://${currentHostname}:${targetPort}${targetPath}`;
+        // Video stream loading (scoped to avoid conflicts with app.js)
+        (function() {
+            const videoIframe = document.getElementById('dynamicIframe');
+            const videoWrapper = document.getElementById('iframe-wrapper');
+            const videoPlaceholder = document.getElementById('videoPlaceholder');
+            const currentHostname = window.location.hostname;
+            const targetPort = 4912;
+            const targetPath = '/embed';
+            const streamUrl = `http://${currentHostname}:${targetPort}${targetPath}`;
 
-        let retryTimeout = null;
-        let loaded = false;
+            let retryTimeout = null;
+            let loaded = false;
 
-        iframe.onload = () => {
-            if (retryTimeout) {
-                clearTimeout(retryTimeout);
-                retryTimeout = null;
+            videoIframe.onload = () => {
+                if (retryTimeout) {
+                    clearTimeout(retryTimeout);
+                    retryTimeout = null;
+                }
+                loaded = true;
+                videoPlaceholder.style.display = 'none';
+                videoWrapper.style.display = 'block';
+            };
+
+            function attemptLoad() {
+                if (loaded) return;
+                videoIframe.src = streamUrl;
+                // Give it 5 seconds to load before retrying
+                retryTimeout = setTimeout(attemptLoad, 5000);
             }
-            loaded = true;
-            placeholder.style.display = 'none';
-            iframeWrapper.style.display = 'block';
-        };
 
-        function attemptLoad() {
-            if (loaded) return;
-            iframe.src = streamUrl;
-            // Give it 5 seconds to load before retrying
-            retryTimeout = setTimeout(attemptLoad, 5000);
-        }
-
-        // Start loading immediately
-        attemptLoad();
+            // Start loading immediately
+            attemptLoad();
+        })();
     </script>
     <script src="libs/socket.io.min.js"></script>
     <script src="app.js"></script>
