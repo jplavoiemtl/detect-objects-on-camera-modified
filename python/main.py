@@ -76,14 +76,12 @@ labels_emitted_once = False
 
 # ================= DETECTION HISTORY CONFIG =================
 MAX_DETECTION_IMAGES = 40  # Maximum number of saved detection images
-IMAGE_SAVE_DEBOUNCE = 5    # Seconds between saved images to prevent rapid duplicates
 DATA_DIR = "data"
 IMAGES_DIR = os.path.join("assets", "images")  # Save to assets so WebUI can serve them
 LOG_FILE = os.path.join(DATA_DIR, "imageslist.log")
 
 # Detection history state
 detection_history = []
-last_image_save_time = 0.0
 next_detection_id = 1
 
 
@@ -309,14 +307,10 @@ def capture_frame():
 
 
 def capture_and_save_detection(label: str, confidence: float):
-    """Capture current frame and save as detection image with debounce."""
-    global last_image_save_time, next_detection_id
+    """Capture current frame and save as a detection image."""
+    global next_detection_id
     
     current_time = time.time()
-    
-    # Check debounce
-    if current_time - last_image_save_time < IMAGE_SAVE_DEBOUNCE:
-        return None
     
     # Capture frame
     frame = capture_frame()
@@ -353,7 +347,6 @@ def capture_and_save_detection(label: str, confidence: float):
     
     # Update state
     next_detection_id += 1
-    last_image_save_time = current_time
     
     # Rotate if needed
     while len(detection_history) > MAX_DETECTION_IMAGES:
@@ -556,9 +549,6 @@ def on_detections(detections: dict):
         last_detection_time = current_time
         confidence = det.get("confidence", 0)
 
-        # Capture and save detection image (debounced)
-        capture_and_save_detection(DETECTION_LABEL, confidence)
-
         # Turn LED on if not already on
         if not led_on:
             set_led(True)
@@ -585,6 +575,9 @@ def on_detections(detections: dict):
 
             mqtt_client.publish(MQTT_DETECTION_TOPIC, json.dumps(mqtt_payload))
             print(f"✅ MQTT message published to {MQTT_DETECTION_TOPIC}: {DETECTION_LABEL} detected (confidence: {confidence:.2f})")
+
+            # Save detection image at the same time we publish MQTT
+            capture_and_save_detection(DETECTION_LABEL, confidence)
 
         # Reset timeout timer – extends delay on each detection
         schedule_led_timeout()
