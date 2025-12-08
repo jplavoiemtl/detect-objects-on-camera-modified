@@ -17,6 +17,10 @@ html, body {
     width: 100vw;
     height: 100vh;
     background: #000000;
+    /* Add padding to prevent overlap with top/bottom controls */
+    padding-top: 60px;
+    padding-bottom: 80px;
+    box-sizing: border-box;
 }
 
 #videoFeedContainer {
@@ -104,16 +108,17 @@ html, body {
     text-align: center;
 }
 
-#controls {
+/* Top controls: Detection settings (slider + dropdown) */
+#controls-top {
     position: absolute;
-    top: 16px;
+    top: 12px;
     left: 50%;
     transform: translateX(-50%);
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 4px;
     background: rgba(17, 17, 17, 0.9);
-    padding: 10px 14px;
+    padding: 8px 12px;
     border-radius: 8px;
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
     color: #fafbfc;
@@ -121,9 +126,27 @@ html, body {
     min-width: 240px;
 }
 
-#controls label {
-    font-size: 0.95rem;
+#controls-top label {
+    font-size: 0.85rem;
     color: #c5d1de;
+}
+
+/* Bottom controls: Navigation buttons and detection info */
+#controls-bottom {
+    position: absolute;
+    bottom: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    background: rgba(17, 17, 17, 0.9);
+    padding: 8px 12px;
+    border-radius: 8px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+    color: #fafbfc;
+    z-index: 10;
+    min-width: 280px;
 }
 
 .slider-row {
@@ -268,8 +291,34 @@ html, body {
         border-radius: 0;
     }
     
+    /* Compact top controls on mobile */
+    #controls-top {
+        top: 8px;
+        padding: 6px 10px;
+        min-width: 200px;
+        max-width: 90vw;
+    }
+    
+    #controls-top label {
+        font-size: 0.75rem;
+    }
+    
+    /* Bottom controls adjustments for mobile */
+    #controls-bottom {
+        bottom: 8px;
+        padding: 6px 10px;
+        min-width: 200px;
+        max-width: 90vw;
+    }
+    
     .nav-row {
         justify-content: center;
+        flex-wrap: wrap;
+    }
+    
+    .nav-btn {
+        padding: 5px 8px;
+        font-size: 0.75rem;
     }
     
     .position-indicator {
@@ -277,5 +326,24 @@ html, body {
         width: 100%;
         text-align: center;
         margin-top: 4px;
+    }
+    
+    .detection-info {
+        flex-wrap: wrap;
+        justify-content: center;
+        font-size: 0.75rem;
+    }
+    
+    .info-time {
+        margin-left: 0;
+        width: 100%;
+        text-align: center;
+        margin-top: 2px;
+    }
+    
+    /* Adjust video container padding for mobile */
+    #video-container {
+        padding-top: 50px;
+        padding-bottom: 90px;
     }
 }

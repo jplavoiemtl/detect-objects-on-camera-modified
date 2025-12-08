@@ -7,7 +7,8 @@
     <link rel="stylesheet" type="text/css" href="style.css">
 </head>
 <body>
-    <div id="controls">
+    <!-- Top controls: Detection settings -->
+    <div id="controls-top">
         <label for="confidenceSlider">Detection confidence</label>
         <div class="slider-row">
             <input type="range" id="confidenceSlider" min="0" max="1" step="0.05" value="0.6">
@@ -16,6 +17,10 @@
                 <option value="">No labels yet</option>
             </select>
         </div>
+    </div>
+    
+    <!-- Bottom controls: Navigation and detection info -->
+    <div id="controls-bottom">
         <div class="nav-row">
             <button id="btnLive" class="nav-btn active" title="Live view">Live</button>
             <button id="btnLatest" class="nav-btn" title="Latest detection">Latest</button>
