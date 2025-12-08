@@ -9,6 +9,19 @@ html, body {
     overflow: hidden;
 }
 
+/* Extra small screens: allow the indicator to move to its own line */
+@media (max-width: 400px) {
+    .nav-row {
+        flex-wrap: wrap;
+    }
+
+    .position-indicator {
+        width: 100%;
+        text-align: right;
+        margin-top: 4px;
+    }
+}
+
 #video-container {
     display: flex;
     flex-direction: column;
@@ -308,26 +321,28 @@ html, body {
         bottom: 8px;
         padding: 6px 10px;
         min-width: 200px;
-        max-width: 90vw;
+        max-width: 130vw; /* allow a bit more room on small devices */
     }
     
     .nav-row {
-        justify-content: center;
-        flex-wrap: wrap;
+        justify-content: flex-start;
+        flex-wrap: wrap; /* allow indicator to drop below buttons */
+        gap: 6px;
     }
     
     .nav-btn {
-        padding: 5px 8px;
-        font-size: 0.75rem;
+        flex: 0 0 auto;
+        padding: 6px 10px;
+        font-size: 0.78rem;
     }
     
     .position-indicator {
-        margin-left: 0;
+        flex-basis: 100%;
         width: 100%;
-        text-align: center;
+        text-align: right;
         margin-top: 4px;
     }
-    
+
     .detection-info {
         flex-wrap: wrap;
         justify-content: center;
