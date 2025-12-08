@@ -11,3 +11,5 @@ dist/
 .DS_Store
 Thumbs.db
 mqtt_secrets.py
+# Generated detection images
+assets/images/
