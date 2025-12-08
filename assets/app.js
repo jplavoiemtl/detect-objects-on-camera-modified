@@ -296,13 +296,16 @@ function handleDetectionSaved(payload) {
         while (detectionHistory.length > 40) {
             detectionHistory.shift();
         }
-        
-        // If viewing latest in history mode, update the view
-        if (viewMode === 'history' && historyIndex === detectionHistory.length - 2) {
+
+        if (viewMode === 'live') {
+            // Stay in live mode but surface the newest detection info
+            showDetectionInfo(data.entry);
+        } else if (viewMode === 'history' && historyIndex === detectionHistory.length - 2) {
+            // If viewing latest in history mode, advance to the newest saved image
             historyIndex = detectionHistory.length - 1;
             showHistoryImage();
         }
-        
+
         updateButtonStates();
         updatePositionIndicator();
     }
