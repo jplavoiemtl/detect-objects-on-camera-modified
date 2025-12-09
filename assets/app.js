@@ -293,8 +293,18 @@ function handleDetectionSaved(payload) {
         detectionHistory.push(data.entry);
         
         // Enforce max limit on client side too (in case backend rotated)
+        let removedCount = 0;
         while (detectionHistory.length > 40) {
             detectionHistory.shift();
+            removedCount++;
+        }
+
+        // Keep historyIndex aligned if user is browsing history when rotation occurs
+        if (removedCount > 0 && viewMode === 'history' && historyIndex >= 0) {
+            historyIndex = Math.max(0, historyIndex - removedCount);
+            if (historyIndex >= detectionHistory.length) {
+                historyIndex = detectionHistory.length - 1;
+            }
         }
 
         if (viewMode === 'live') {
