@@ -516,6 +516,13 @@ def set_led(state: bool):
     except Exception as e:
         print(f"Bridge error: {e}")
 
+def playAnimation():
+    """Play the animation via bridge with error handling."""
+    try:
+        bridge.call("playAnimation")
+    except Exception as e:
+        print(f"Bridge error: {e}")
+
 
 def turn_off_led():
     """Timer callback to turn off LED after timeout."""
@@ -593,6 +600,8 @@ def on_detections(detections: dict):
 
             # Save detection image at the same time we publish MQTT
             capture_and_save_detection(DETECTION_LABEL, confidence)
+
+            playAnimation()
 
         # Reset timeout timer – extends delay on each detection
         schedule_led_timeout()
