@@ -300,6 +300,9 @@ function handleDetectionSaved(payload) {
     if (data?.entry) {
         detectionHistory.push(data.entry);
         
+        // Determine if the user was viewing the latest item *before* any rotation
+        const wasViewingLatest = viewMode === 'history' && historyIndex === detectionHistory.length - 2;
+        
         // Enforce max limit on client side too (in case backend rotated)
         let removedCount = 0;
         while (detectionHistory.length > 40) {
@@ -307,8 +310,9 @@ function handleDetectionSaved(payload) {
             removedCount++;
         }
 
-        // Keep historyIndex aligned if user is browsing history when rotation occurs
-        if (removedCount > 0 && viewMode === 'history' && historyIndex >= 0) {
+        // Keep historyIndex aligned if user is browsing history when rotation occurs,
+        // but skip adjustment if we are about to auto-advance from the previous-latest.
+        if (!wasViewingLatest && removedCount > 0 && viewMode === 'history' && historyIndex >= 0) {
             historyIndex = Math.max(0, historyIndex - removedCount);
             if (historyIndex >= detectionHistory.length) {
                 historyIndex = detectionHistory.length - 1;
@@ -318,7 +322,7 @@ function handleDetectionSaved(payload) {
         if (viewMode === 'live') {
             // Stay in live mode but surface the newest detection info
             showDetectionInfo(data.entry);
-        } else if (viewMode === 'history' && historyIndex === detectionHistory.length - 2) {
+        } else if (wasViewingLatest) {
             // If viewing latest in history mode, advance to the newest saved image
             historyIndex = detectionHistory.length - 1;
             showHistoryImage();
