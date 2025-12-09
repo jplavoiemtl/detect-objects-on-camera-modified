@@ -326,7 +326,7 @@ html, body {
     }
     
     .nav-row {
-        justify-content: flex-start;
+        justify-content: center;
         flex-wrap: wrap; /* allow indicator to drop below buttons */
         gap: 4px;
     }
@@ -343,7 +343,7 @@ html, body {
         order: 2;
         flex-basis: 100%;
         width: 100%;
-        text-align: right;
+        text-align: center;
         margin-top: 4px;
     }
 
