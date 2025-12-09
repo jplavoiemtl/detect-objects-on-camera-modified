@@ -96,5 +96,5 @@ void setup() {
 
 void loop() {
   updateAnimation();
-  delay(10);
+  delay(5);
 }
