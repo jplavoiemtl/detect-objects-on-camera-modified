@@ -233,18 +233,16 @@ function initSocketIO() {
             errorContainer.textContent = '';
         }
 
-        // Re-send current slider value on reconnect to keep backend in sync
-        const value = confidenceSlider ? parseFloat(confidenceSlider.value) : DEFAULT_CONFIDENCE;
-        if (Number.isFinite(value)) {
-            socket.emit('override_th', value);
-        }
-
         console.log('[DEBUG] Emitting request_labels');
         socket.emit('request_labels', null);
         
         // Request detection history
         console.log('[DEBUG] Emitting request_history');
         socket.emit('request_history', null);
+
+        // Request current threshold to sync UI without overwriting backend state
+        console.log('[DEBUG] Emitting request_threshold');
+        socket.emit('request_threshold', null);
     });
 
     socket.on('disconnect', () => {
@@ -260,12 +258,22 @@ function initSocketIO() {
 
     // Label dropdown updates
     socket.on('labels', updateLabelDropdown);
+    socket.on('threshold', handleThreshold);
     
     // History list from backend
     socket.on('history_list', handleHistoryList);
     
     // New detection saved
     socket.on('detection_saved', handleDetectionSaved);
+}
+
+function handleThreshold(payload) {
+    const value = payload?.value ?? payload?.message?.value;
+    if (!Number.isFinite(value)) return;
+    if (confidenceSlider) {
+        confidenceSlider.value = value;
+    }
+    updateConfidenceDisplay(value);
 }
 
 function handleHistoryList(payload) {

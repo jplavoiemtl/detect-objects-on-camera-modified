@@ -384,6 +384,15 @@ def emit_history_list():
         print(f"[UI] Failed to emit history_list: {e}")
 
 
+def emit_threshold():
+    """Send current detection confidence threshold to UI."""
+    payload = {"value": DETECTION_CONFIDENCE}
+    try:
+        ui.send_message("threshold", message=payload)
+    except Exception as e:
+        print(f"[UI] Failed to emit threshold: {e}")
+
+
 # Components
 ui = WebUI()
 detection_stream = VideoObjectDetection(confidence=DETECTION_CONFIDENCE, debounce_sec=0.0)
@@ -453,6 +462,12 @@ def handle_history_request(_sid, _value):
     """Send detection history list to requesting client."""
     print(f"[DEBUG] request_history received from client sid={_sid}")
     emit_history_list()
+
+
+def handle_threshold_request(_sid, _value):
+    """Send current detection threshold to requesting client."""
+    print(f"[DEBUG] request_threshold received from client sid={_sid}")
+    emit_threshold()
 
 
 def handle_image_request(_sid, value):
@@ -588,6 +603,7 @@ ui.on_message("override_th", handle_confidence_override)
 ui.on_message("override_label", handle_label_override)
 ui.on_message("request_labels", handle_labels_request)
 ui.on_message("request_history", handle_history_request)
+ui.on_message("request_threshold", handle_threshold_request)
 ui.on_message("request_image", handle_image_request)
 emit_detected_labels()
 
