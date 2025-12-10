@@ -33,17 +33,38 @@ mqtt_client.will_set(
     retain=True
 )
 
-mqtt_client.connect(SERVERMQTT, SERVERPORT, 60)
-mqtt_client.loop_start()
+def safe_publish(topic: str, payload: str, retain: bool = False) -> bool:
+    """Publish with error handling to avoid crashing the main loop."""
+    try:
+        mqtt_client.publish(topic, payload, retain=retain)
+        return True
+    except Exception as e:
+        print(f"[MQTT] publish failed topic={topic}: {e}")
+        return False
 
-# Announce online status
-mqtt_client.publish(
-    STATUS_TOPIC,
-    json.dumps({"device": CLIENT_ID, "status": "online"}),
-    retain=True
-)
 
-print(f"✅ MQTT connected to {SERVERMQTT}:{SERVERPORT} as {CLIENT_ID}")
+def mqtt_connect_with_retry(max_attempts: int = 3, backoff: int = 2) -> bool:
+    """Connect to MQTT broker with basic retry/backoff."""
+    for attempt in range(1, max_attempts + 1):
+        try:
+            mqtt_client.connect(SERVERMQTT, SERVERPORT, 60)
+            mqtt_client.loop_start()
+            print(f"✅ MQTT connected to {SERVERMQTT}:{SERVERPORT} as {CLIENT_ID}")
+            safe_publish(
+                STATUS_TOPIC,
+                json.dumps({"device": CLIENT_ID, "status": "online"}),
+                retain=True
+            )
+            return True
+        except Exception as e:
+            print(f"[MQTT] connect attempt {attempt}/{max_attempts} failed: {e}")
+            time.sleep(backoff)
+            backoff = min(backoff * 2, 30)
+    print("[MQTT] giving up after retries; MQTT features will be degraded")
+    return False
+
+
+mqtt_connected = mqtt_connect_with_retry()
 
 # ================= HEARTBEAT THREAD =================
 
@@ -53,7 +74,7 @@ def heartbeat():
         detection_age = current_time - last_detection_time
         status = "active" if detection_age <= WATCHDOG_THRESHOLD else "idle"
 
-        mqtt_client.publish(
+        safe_publish(
             STATUS_TOPIC,
             json.dumps({
                 "device": CLIENT_ID,
@@ -112,8 +133,16 @@ def load_detection_history():
                     except json.JSONDecodeError:
                         continue
         
+        # Trim history to configured maximum to avoid unbounded growth
+        if len(detection_history) > MAX_DETECTION_IMAGES:
+            trimmed = detection_history[-MAX_DETECTION_IMAGES:]
+            removed = len(detection_history) - len(trimmed)
+            detection_history = trimmed
+            print(f"[HISTORY] Trimmed {removed} old records to respect MAX_DETECTION_IMAGES={MAX_DETECTION_IMAGES}")
+            rewrite_log_file()
+        
         if detection_history:
-            # Set next ID based on highest existing ID
+            # Set next ID based on highest existing ID (after trimming)
             max_id = max(entry.get("id", 0) for entry in detection_history)
             next_detection_id = max_id + 1
         
@@ -176,6 +205,8 @@ _sio_initialized = False
 _latest_frame = None
 _sio_connected = False
 _sio_client = None
+_last_connect_attempt = 0.0
+_reconnect_interval = 5.0
 
 
 def _setup_socketio():
@@ -288,11 +319,15 @@ def _connect_socketio():
 
 def capture_frame():
     """Capture a single frame from the video stream via Socket.IO."""
-    global _sio_initialized, _latest_frame
+    global _sio_initialized, _latest_frame, _last_connect_attempt
     
-    # Connect to Socket.IO on first call
-    if not _sio_initialized:
+    now = time.time()
+    
+    # Connect to Socket.IO on first call or retry periodically if disconnected
+    should_attempt = (not _sio_initialized) or (not _sio_connected and (now - _last_connect_attempt >= _reconnect_interval))
+    if should_attempt:
         _sio_initialized = True
+        _last_connect_attempt = now
         print("[CAPTURE] Connecting to video stream via Socket.IO...")
         if _connect_socketio():
             print("[CAPTURE] Socket.IO connection established!")
@@ -559,21 +594,41 @@ def on_detections(detections: dict):
 
     det = None
 
+    def normalize_detection_value(val):
+        """Return (confidence, bbox_xyxy) for mixed payload shapes."""
+        if isinstance(val, dict):
+            confidence_val = val.get("confidence", val.get("score", 0.0))
+            bbox_xyxy = val.get("bounding_box_xyxy") or val.get("bbox") or []
+        elif isinstance(val, (int, float)):
+            confidence_val = float(val)
+            bbox_xyxy = []
+        else:
+            confidence_val = 0.0
+            bbox_xyxy = []
+        return float(confidence_val), bbox_xyxy
+
     # Look for the label in any casing (e.g., bottle, Bottle, BOTTLE)
     # Print all detected objects with confidence percentage
     global labels_emitted_once
     previous_len = len(detected_labels)
-    for key, value in detections.items():
-        confidence_percent = value.get("confidence", 0) * 100
-        print(f"{key} (Confidence: {confidence_percent:.1f}%)")
+    try:
+        for key, value in detections.items():
+            confidence_val, bbox_xyxy = normalize_detection_value(value)
+            confidence_percent = confidence_val * 100
+            print(f"{key} (Confidence: {confidence_percent:.1f}%)")
 
-        canonical_label = key.strip().lower()
-        if canonical_label:
-            detected_labels.add(canonical_label)
+            canonical_label = key.strip().lower()
+            if canonical_label:
+                detected_labels.add(canonical_label)
 
-        # Keep the first match for the selected detection label
-        if det is None and canonical_label == DETECTION_LABEL.lower():
-            det = value
+            # Keep the first match for the selected detection label
+            if det is None and canonical_label == DETECTION_LABEL.lower():
+                det = {
+                    "confidence": confidence_val,
+                    "bounding_box_xyxy": bbox_xyxy
+                }
+    except Exception as e:
+        print(f"[DETECTION] Error parsing detections: {e}")
 
     if len(detected_labels) != previous_len or not labels_emitted_once:
         emit_detected_labels()
@@ -607,8 +662,10 @@ def on_detections(detections: dict):
                 "bbox": bbox
             }
 
-            mqtt_client.publish(MQTT_DETECTION_TOPIC, json.dumps(mqtt_payload))
-            print(f"✅ MQTT message published to {MQTT_DETECTION_TOPIC}: {DETECTION_LABEL} detected (confidence: {confidence:.2f})")
+            if safe_publish(MQTT_DETECTION_TOPIC, json.dumps(mqtt_payload)):
+                print(f"✅ MQTT message published to {MQTT_DETECTION_TOPIC}: {DETECTION_LABEL} detected (confidence: {confidence:.2f})")
+            else:
+                print(f"[MQTT] Failed to publish detection for {DETECTION_LABEL}")
 
             # Save detection image at the same time we publish MQTT
             capture_and_save_detection(DETECTION_LABEL, confidence, bbox_xyxy)
@@ -640,7 +697,7 @@ def shutdown_handler(signum, frame):
     
     # Publish offline status
     try:
-        mqtt_client.publish(
+        safe_publish(
             STATUS_TOPIC,
             json.dumps({"device": CLIENT_ID, "status": "offline"}),
             retain=True
