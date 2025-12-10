@@ -1,8 +1,8 @@
 # Detect Objects on Camera
 
-The **Detect Objects on Camera** example lets you detect objects on a live feed from a USB camera and visualize bounding boxes around the detections in real-time.
+The **Detect Objects on Camera** lets you detect objects on a live feed from a USB camera and visualize bounding boxes around the detections in real-time.
 
-**Note:** This example must be run in **Network Mode** in the Arduino App Lab, since it requires a USB-C hub and a USB camera.
+**Note:** This must be run in **Network Mode** in the Arduino App Lab or a terminal, since it requires a USB-C hub and a USB camera.
 
 ![Detect Objects on Camera](assets/docs_assets/video-object-detection.png)
 
@@ -10,7 +10,7 @@ This example uses a pre-trained model to detect objects on a live video feed fro
 
 ## Brick Used
 
-The example uses the following Bricks:
+This uses the following Bricks:
 
 - `web_ui`: Brick to create a web interface to display the classification results and model controls.
 - `video_objectdetection`: Brick to classify objects within a live video feed from a camera.
@@ -19,15 +19,15 @@ The example uses the following Bricks:
 
 ### Hardware
 
-- [Arduino® UNO Q](https://store.arduino.cc/products/uno-q)
+- [Arduino UNO Q](https://store.arduino.cc/products/uno-q)
 - USB camera (x1)
-- USB-C® hub adapter with external power (x1)
+- USB-C hub adapter with external power (x1)
 - A power supply (5 V, 3 A) for the USB hub (e.g. a phone charger)
 - Personal computer with internet access
 
 ### Software
 
-- Arduino App Lab
+- Arduino App Lab, Warp terminal, Cursor for edition with AI
 
 ## How to Use the Example
 
@@ -39,16 +39,6 @@ The example uses the following Bricks:
 4. The App should open automatically in the web browser. You can open it manually via `<board-name>.local:7000`.
 5. Position any object in front of the camera and watch as the App detects and recognizes them.
 
-Try with one of the following objects for a special reaction:
-
-- Cat
-- Cell phone
-- Clock
-- Cup
-- Dog
-- Potted plant
-
-![Example of special reaction](assets/docs_assets/special-detection.png)
 
 ## How it Works
 
@@ -83,15 +73,6 @@ Here is a brief explanation of the full-stack application:
 - **Controls**
   - Slider, numeric input, and reset button adjust threshold live
   - Updates sent to backend with: `socket.emit("override_th", value)`
-
-- **Feedback**
-  - Shows GIF + text for known objects (dog, cat, cup, cell phone, clock, potted plant)
-
-- **Recent detections**
-  - Displays the last 5 detections with percentage and timestamp
-
-- **Connection status**
-  - Shows an error message if the WebSocket connection drops
 
 ---
 
