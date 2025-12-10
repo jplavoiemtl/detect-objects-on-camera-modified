@@ -306,8 +306,11 @@ def capture_frame():
     return None
 
 
-def capture_and_save_detection(label: str, confidence: float):
-    """Capture current frame and save as a detection image."""
+def capture_and_save_detection(label: str, confidence: float, bbox_xyxy=None):
+    """Capture current frame and save as a detection image.
+
+    Optionally draws the provided bounding box (x1, y1, x2, y2) on the frame before saving.
+    """
     global next_detection_id
     
     current_time = time.time()
@@ -324,6 +327,15 @@ def capture_and_save_detection(label: str, confidence: float):
     filename = f"detection_{timestamp_str}_{next_detection_id:03d}.jpg"
     filepath = os.path.join(IMAGES_DIR, filename)
     
+    # Draw bounding box if provided
+    if bbox_xyxy and len(bbox_xyxy) == 4:
+        x1, y1, x2, y2 = bbox_xyxy
+        # Convert to int and clamp to frame bounds
+        h, w = frame.shape[:2]
+        x1, y1 = max(0, int(x1)), max(0, int(y1))
+        x2, y2 = min(w - 1, int(x2)), min(h - 1, int(y2))
+        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 1)
+
     # Save image
     try:
         cv2.imwrite(filepath, frame)
@@ -599,7 +611,7 @@ def on_detections(detections: dict):
             print(f"✅ MQTT message published to {MQTT_DETECTION_TOPIC}: {DETECTION_LABEL} detected (confidence: {confidence:.2f})")
 
             # Save detection image at the same time we publish MQTT
-            capture_and_save_detection(DETECTION_LABEL, confidence)
+            capture_and_save_detection(DETECTION_LABEL, confidence, bbox_xyxy)
 
             playAnimation()
 
