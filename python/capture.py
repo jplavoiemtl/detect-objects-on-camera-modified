@@ -65,28 +65,26 @@ def _process_frame_data(data):
     """Process incoming frame data from Socket.IO."""
     global _latest_frame
     try:
-        # Expect dict payloads carrying frame data
         if not isinstance(data, dict):
             return
 
-        img_data = None
-        for key in ["frame", "image", "data", "img", "jpeg", "jpg", "png"]:
-            if key in data:
-                img_data = data[key]
-                break
-
-        if img_data is None:
+        # Find image data using any common key
+        img_data = next(
+            (data[k] for k in ["frame", "image", "data", "img", "jpeg", "jpg", "png"] if k in data),
+            None
+        )
+        
+        if not isinstance(img_data, str):
             return
 
-        if isinstance(img_data, str):
-            if "base64," in img_data:
-                img_data = img_data.split("base64,", 1)[1]
-            img_bytes = base64.b64decode(img_data)
-        else:
-            return
-
-        nparr = np.frombuffer(img_bytes, np.uint8)
-        frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        # Strip base64 prefix if present
+        if "base64," in img_data:
+            img_data = img_data.split("base64,", 1)[1]
+        
+        # Decode and convert to frame
+        img_bytes = base64.b64decode(img_data)
+        frame = cv2.imdecode(np.frombuffer(img_bytes, np.uint8), cv2.IMREAD_COLOR)
+        
         if frame is not None:
             _latest_frame = frame
     except Exception:
