@@ -98,9 +98,8 @@ def _connect_socketio():
     if _sio_connected:
         return True
 
-    if _sio_client is None:
-        if not _setup_socketio():
-            return False
+    if _sio_client is None and not _setup_socketio():
+        return False
 
     sio_urls = [
         f"http://{VIDEO_WS_HOST}:{VIDEO_STREAM_PORT}",
@@ -118,10 +117,12 @@ def _connect_socketio():
                 return True
         except Exception as e:
             print(f"[CAPTURE] Socket.IO connection failed for {url}: {type(e).__name__}")
-            try:
-                _sio_client.disconnect()
-            except Exception:
-                pass
+        finally:
+            if not _sio_connected:
+                try:
+                    _sio_client.disconnect()
+                except Exception:
+                    pass
 
     return False
 
