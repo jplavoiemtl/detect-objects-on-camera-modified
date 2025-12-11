@@ -245,14 +245,17 @@ detection_stream.on_detect_all(on_detections)
 ui.on_message(
     "override_th",
     lambda sid, val: handle_confidence_override(
-        detection_stream, {"DETECTION_CONFIDENCE": DETECTION_CONFIDENCE}, sid, val
+        detection_stream,
+        lambda v: globals().__setitem__("DETECTION_CONFIDENCE", v),
+        sid,
+        val,
     ),
 )
 ui.on_message(
     "override_label",
     lambda sid, val: handle_label_override(
         detected_labels,
-        {"DETECTION_LABEL": DETECTION_LABEL},
+        lambda v: globals().__setitem__("DETECTION_LABEL", v),
         sid,
         val,
         lambda: emit_detected_labels(ui, detected_labels, DETECTION_LABEL),

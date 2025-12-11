@@ -48,7 +48,7 @@ def emit_detected_labels(ui, detected_labels: Set[str], detection_label: str):
         print(f"[UI] Failed to emit labels: {e}")
 
 
-def handle_confidence_override(detection_stream, state: dict, _sid, value):
+def handle_confidence_override(detection_stream, set_confidence, _sid, value):
     """Handle confidence override messages from the Web UI."""
     try:
         threshold = float(value)
@@ -61,11 +61,11 @@ def handle_confidence_override(detection_stream, state: dict, _sid, value):
         return
 
     detection_stream.override_threshold(threshold)
-    state["DETECTION_CONFIDENCE"] = threshold
+    set_confidence(threshold)
     print(f"[UI] Detection confidence updated to {threshold:.2f}")
 
 
-def handle_label_override(detected_labels: Set[str], state: dict, _sid, value, emit_labels):
+def handle_label_override(detected_labels: Set[str], set_label, _sid, value, emit_labels):
     """Handle label override from UI dropdown."""
     if not isinstance(value, str):
         print(f"[UI] Ignoring label override (not a string): {value}")
@@ -80,8 +80,8 @@ def handle_label_override(detected_labels: Set[str], state: dict, _sid, value, e
         print(f"[UI] Ignoring label override (unknown): {label}")
         return
 
-    state["DETECTION_LABEL"] = label
-    print(f"[UI] Detection label updated to '{state['DETECTION_LABEL']}'")
+    set_label(label)
+    print(f"[UI] Detection label updated to '{label}'")
     emit_labels()
 
 
