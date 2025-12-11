@@ -22,6 +22,17 @@ from mqtt_client import (
     safe_publish,
 )
 from health_monitor import mark_progress, start_health_monitor
+from persistence import (
+    DATA_DIR,
+    IMAGES_DIR,
+    LOG_FILE,
+    MAX_DETECTION_IMAGES,
+    delete_oldest_detection,
+    init_data_directories,
+    load_detection_history,
+    rewrite_log_file,
+    save_detection_to_log,
+)
 
 # Timezone configuration - change this to your timezone
 LOCAL_TIMEZONE = pytz.timezone('America/Montreal')
@@ -61,102 +72,13 @@ DETECTION_LABEL = "bottle"     # change this to "bottle", "car", "person", etc.
 detected_labels = {DETECTION_LABEL.lower()}
 labels_emitted_once = False
 
-# ================= DETECTION HISTORY CONFIG =================
-MAX_DETECTION_IMAGES = 40  # Maximum number of saved detection images
-DATA_DIR = "data"
-IMAGES_DIR = os.path.join("assets", "images")  # Save to assets so WebUI can serve them
-LOG_FILE = os.path.join(DATA_DIR, "imageslist.log")
-
 # Detection history state
 detection_history = []
 next_detection_id = 1
 
-
-def init_data_directories():
-    """Create data directories if they don't exist."""
-    os.makedirs(DATA_DIR, exist_ok=True)
-    os.makedirs(IMAGES_DIR, exist_ok=True)
-    print(f"✅ Data directories initialized: {DATA_DIR}, {IMAGES_DIR}")
-
-
-def load_detection_history():
-    """Load existing detection history from log file on startup."""
-    global detection_history, next_detection_id
-    detection_history = []
-    
-    if not os.path.exists(LOG_FILE):
-        print("[HISTORY] No existing log file found, starting fresh")
-        return
-    
-    try:
-        with open(LOG_FILE, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if line:
-                    try:
-                        entry = json.loads(line)
-                        detection_history.append(entry)
-                    except json.JSONDecodeError:
-                        continue
-        
-        # Trim history to configured maximum to avoid unbounded growth
-        if len(detection_history) > MAX_DETECTION_IMAGES:
-            trimmed = detection_history[-MAX_DETECTION_IMAGES:]
-            removed = len(detection_history) - len(trimmed)
-            detection_history = trimmed
-            print(f"[HISTORY] Trimmed {removed} old records to respect MAX_DETECTION_IMAGES={MAX_DETECTION_IMAGES}")
-            rewrite_log_file()
-        
-        if detection_history:
-            # Set next ID based on highest existing ID (after trimming)
-            max_id = max(entry.get("id", 0) for entry in detection_history)
-            next_detection_id = max_id + 1
-        
-        print(f"✅ Loaded {len(detection_history)} detection records from history")
-    except Exception as e:
-        print(f"[HISTORY] Error loading log file: {e}")
-
-
-def save_detection_to_log(entry: dict):
-    """Append a detection entry to the log file."""
-    try:
-        with open(LOG_FILE, "a", encoding="utf-8") as f:
-            f.write(json.dumps(entry) + "\n")
-    except Exception as e:
-        print(f"[HISTORY] Error saving to log: {e}")
-
-
-def rewrite_log_file():
-    """Rewrite the entire log file from detection_history (used after rotation)."""
-    try:
-        with open(LOG_FILE, "w", encoding="utf-8") as f:
-            for entry in detection_history:
-                f.write(json.dumps(entry) + "\n")
-    except Exception as e:
-        print(f"[HISTORY] Error rewriting log file: {e}")
-
-
-def delete_oldest_detection():
-    """Delete the oldest detection image and remove from history."""
-    if not detection_history:
-        return
-    
-    oldest = detection_history.pop(0)
-    image_path = os.path.join(IMAGES_DIR, oldest.get("filename", ""))
-    
-    try:
-        if os.path.exists(image_path):
-            os.remove(image_path)
-            print(f"[HISTORY] Deleted oldest image: {oldest.get('filename')}")
-    except Exception as e:
-        print(f"[HISTORY] Error deleting image: {e}")
-    
-    rewrite_log_file()
-
-
 # Initialize data directories and load history on startup
 init_data_directories()
-load_detection_history()
+detection_history, next_detection_id = load_detection_history()
 
 # ================= FRAME CAPTURE =================
 # Video stream runs on port 4912 via Socket.IO
@@ -363,7 +285,7 @@ def capture_and_save_detection(label: str, confidence: float, bbox_xyxy=None):
     
     # Rotate if needed
     while len(detection_history) > MAX_DETECTION_IMAGES:
-        delete_oldest_detection()
+        delete_oldest_detection(detection_history)
     
     print(f"✅ Detection saved: {filename} ({label}, {confidence:.2f})")
     
