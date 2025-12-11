@@ -33,6 +33,18 @@ from persistence import (
 )
 from capture import capture_and_save_detection
 from health_monitor import mark_progress, start_health_monitor
+from ui_handlers import (
+    emit_detected_labels,
+    emit_detection_saved,
+    emit_history_list,
+    emit_threshold,
+    handle_confidence_override,
+    handle_history_request,
+    handle_image_request,
+    handle_label_override,
+    handle_labels_request,
+    handle_threshold_request,
+)
 
 # Timezone configuration - change this to your timezone
 LOCAL_TIMEZONE = pytz.timezone('America/Montreal')
@@ -80,141 +92,10 @@ next_detection_id = 1
 init_data_directories()
 detection_history, next_detection_id = load_detection_history()
 
-def emit_detection_saved(entry: dict):
-    """Notify UI that a new detection was saved."""
-    payload = {
-        "entry": entry,
-        "total": len(detection_history)
-    }
-    try:
-        ui.send_message("detection_saved", message=payload)
-    except Exception as e:
-        print(f"[UI] Failed to emit detection_saved: {e}")
-
-
-def emit_history_list():
-    """Send full detection history list to UI."""
-    payload = {
-        "history": detection_history,
-        "total": len(detection_history)
-    }
-    try:
-        ui.send_message("history_list", message=payload)
-    except Exception as e:
-        print(f"[UI] Failed to emit history_list: {e}")
-
-
-def emit_threshold():
-    """Send current detection confidence threshold to UI."""
-    payload = {"value": DETECTION_CONFIDENCE}
-    try:
-        ui.send_message("threshold", message=payload)
-    except Exception as e:
-        print(f"[UI] Failed to emit threshold: {e}")
-
-
 # Components
 ui = WebUI()
 detection_stream = VideoObjectDetection(confidence=DETECTION_CONFIDENCE, debounce_sec=0.0)
 bridge = Bridge()
-
-
-def handle_confidence_override(_sid, value):
-    """Handle confidence override messages from the Web UI."""
-    global DETECTION_CONFIDENCE
-    try:
-        threshold = float(value)
-    except (TypeError, ValueError):
-        print(f"[UI] Ignoring confidence override (not a number): {value}")
-        return
-
-    if not 0.0 <= threshold <= 1.0:
-        print(f"[UI] Ignoring confidence override outside [0,1]: {threshold}")
-        return
-
-    detection_stream.override_threshold(threshold)
-    DETECTION_CONFIDENCE = threshold
-    print(f"[UI] Detection confidence updated to {threshold:.2f}")
-
-
-def emit_detected_labels():
-    """Broadcast the current detected label list and selected label to the UI."""
-    labels_payload = {
-        "labels": sorted(detected_labels),
-        "selected": DETECTION_LABEL.lower()
-    }
-    print(f"[DEBUG] Emitting labels: {labels_payload}")
-    try:
-        ui.send_message("labels", message=labels_payload)
-        print("[DEBUG] Labels emitted successfully")
-    except Exception as e:
-        print(f"[UI] Failed to emit labels: {e}")
-
-
-def handle_label_override(_sid, value):
-    """Handle label override from UI dropdown."""
-    global DETECTION_LABEL
-    if not isinstance(value, str):
-        print(f"[UI] Ignoring label override (not a string): {value}")
-        return
-
-    label = value.strip().lower()
-    if not label:
-        print("[UI] Ignoring label override (empty)")
-        return
-
-    if label not in detected_labels:
-        print(f"[UI] Ignoring label override (unknown): {label}")
-        return
-
-    DETECTION_LABEL = label
-    print(f"[UI] Detection label updated to '{DETECTION_LABEL}'")
-    emit_detected_labels()
-
-
-def handle_labels_request(_sid, _value):
-    """Send current detected labels list to requesting client."""
-    print(f"[DEBUG] request_labels received from client sid={_sid}")
-    emit_detected_labels()
-
-
-def handle_history_request(_sid, _value):
-    """Send detection history list to requesting client."""
-    print(f"[DEBUG] request_history received from client sid={_sid}")
-    emit_history_list()
-
-
-def handle_threshold_request(_sid, _value):
-    """Send current detection threshold to requesting client."""
-    print(f"[DEBUG] request_threshold received from client sid={_sid}")
-    emit_threshold()
-
-
-def handle_image_request(_sid, value):
-    """Send specific detection record by index."""
-    try:
-        index = int(value) if value is not None else -1
-    except (TypeError, ValueError):
-        index = -1
-    
-    if not detection_history:
-        return
-    
-    # Handle negative index (from end)
-    if index < 0:
-        index = len(detection_history) + index
-    
-    if 0 <= index < len(detection_history):
-        entry = detection_history[index]
-        payload = {
-            "entry": entry,
-            "index": index,
-            "total": len(detection_history)
-        }
-        try:
-            ui.send_message("image_data", message=payload)
-        except Exception as e:
-            print(f"[UI] Failed to emit image_data: {e}")
 
 # State
 led_on = False
@@ -305,7 +186,7 @@ def on_detections(detections: dict):
         print(f"[DETECTION] Error parsing detections: {e}")
 
     if len(detected_labels) != previous_len or not labels_emitted_once:
-        emit_detected_labels()
+        emit_detected_labels(ui, detected_labels, DETECTION_LABEL)
         labels_emitted_once = True
 
     if det:
@@ -352,7 +233,7 @@ def on_detections(detections: dict):
                 timezone=LOCAL_TIMEZONE,
             )
             if entry:
-                emit_detection_saved(entry)
+                emit_detection_saved(ui, detection_history, entry)
 
             playAnimation()
 
@@ -361,13 +242,47 @@ def on_detections(detections: dict):
 
 
 detection_stream.on_detect_all(on_detections)
-ui.on_message("override_th", handle_confidence_override)
-ui.on_message("override_label", handle_label_override)
-ui.on_message("request_labels", handle_labels_request)
-ui.on_message("request_history", handle_history_request)
-ui.on_message("request_threshold", handle_threshold_request)
-ui.on_message("request_image", handle_image_request)
-emit_detected_labels()
+ui.on_message(
+    "override_th",
+    lambda sid, val: handle_confidence_override(
+        detection_stream, {"DETECTION_CONFIDENCE": DETECTION_CONFIDENCE}, sid, val
+    ),
+)
+ui.on_message(
+    "override_label",
+    lambda sid, val: handle_label_override(
+        detected_labels,
+        {"DETECTION_LABEL": DETECTION_LABEL},
+        sid,
+        val,
+        lambda: emit_detected_labels(ui, detected_labels, DETECTION_LABEL),
+    ),
+)
+ui.on_message(
+    "request_labels",
+    lambda sid, val: handle_labels_request(
+        lambda: emit_detected_labels(ui, detected_labels, DETECTION_LABEL),
+        sid,
+        val,
+    ),
+)
+ui.on_message(
+    "request_history",
+    lambda sid, val: handle_history_request(
+        lambda: emit_history_list(ui, detection_history), sid, val
+    ),
+)
+ui.on_message(
+    "request_threshold",
+    lambda sid, val: handle_threshold_request(
+        lambda: emit_threshold(ui, DETECTION_CONFIDENCE), sid, val
+    ),
+)
+ui.on_message(
+    "request_image",
+    lambda sid, val: handle_image_request(ui, detection_history, sid, val),
+)
+emit_detected_labels(ui, detected_labels, DETECTION_LABEL)
 
 # ================= GRACEFUL SHUTDOWN =================
 
