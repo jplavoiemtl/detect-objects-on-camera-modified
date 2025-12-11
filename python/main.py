@@ -31,7 +31,7 @@ from persistence import (
     rewrite_log_file,
     save_detection_to_log,
 )
-from capture import capture_and_save_detection
+from capture import capture_and_save_detection, start_capture_reconnect_daemon
 from health_monitor import mark_progress, start_health_monitor
 from ui_handlers import (
     emit_detected_labels,
@@ -106,6 +106,7 @@ WATCHDOG_THRESHOLD = 90  # Seconds since last detection to consider the system i
 # Start heartbeat after state is initialized to avoid NameError in thread
 threading.Thread(target=heartbeat, daemon=True).start()
 start_health_monitor()
+start_capture_reconnect_daemon()
 
 
 def set_led(state: bool):

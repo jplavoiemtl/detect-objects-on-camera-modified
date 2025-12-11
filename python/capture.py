@@ -1,5 +1,6 @@
 import base64
 import os
+import threading
 import time
 from datetime import datetime
 from typing import List, Optional, Tuple
@@ -24,6 +25,7 @@ _sio_connected = False
 _sio_client = None
 _last_connect_attempt = 0.0
 _reconnect_interval = 5.0
+_reconnector_started = False
 
 
 def _setup_socketio():
@@ -151,6 +153,32 @@ def capture_frame():
         return _latest_frame.copy()
 
     return None
+
+
+def _reconnect_loop():
+    """Background reconnect loop to recover the video stream when idle."""
+    global _sio_initialized, _last_connect_attempt
+    while True:
+        now = time.time()
+        if not _sio_connected and (now - _last_connect_attempt) >= _reconnect_interval:
+            _sio_initialized = True
+            _last_connect_attempt = now
+            print("[CAPTURE] Background reconnect attempt to video stream...")
+            if _connect_socketio():
+                print("[CAPTURE] Socket.IO reconnection succeeded")
+            else:
+                print("[CAPTURE] Socket.IO reconnection failed")
+        time.sleep(1.0)
+
+
+def start_capture_reconnect_daemon(reconnect_interval: float = 5.0):
+    """Start background reconnect attempts to keep the video stream alive."""
+    global _reconnect_interval, _reconnector_started
+    if _reconnector_started:
+        return
+    _reconnector_started = True
+    _reconnect_interval = max(1.0, reconnect_interval)
+    threading.Thread(target=_reconnect_loop, daemon=True).start()
 
 
 def capture_and_save_detection(

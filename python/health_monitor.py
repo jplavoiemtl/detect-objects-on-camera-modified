@@ -18,6 +18,7 @@ REBOOT_GRACE_SECONDS = 5 * 60       # if no progress for this long AND MQTT down
 
 _health_thread_started = False
 last_progress_time = time.time()
+last_mqtt_ok = time.time()
 
 
 def mark_progress(reason: str = ""):
@@ -58,18 +59,23 @@ def force_reboot(reason: str):
 
 def _health_monitor():
     """Periodic health check: try reconnects, and reboot if stuck offline."""
+    global last_mqtt_ok
     while True:
         now = time.time()
         stale = now - last_progress_time
 
         # Try to heal MQTT connectivity if lost
-        if not is_connected():
+        if is_connected():
+            last_mqtt_ok = now
+        else:
             print("[HEALTH] MQTT down; attempting reconnect...")
             mqtt_connect_with_retry(max_attempts=2, backoff=2)
 
         # If we've been stale for too long and still offline, reboot
-        if stale >= REBOOT_GRACE_SECONDS and not is_connected():
-            force_reboot(f"no-progress-for-{int(stale)}s-and-mqtt-down")
+        offline_duration = now - last_mqtt_ok
+        if (stale >= REBOOT_GRACE_SECONDS or offline_duration >= REBOOT_GRACE_SECONDS) and not is_connected():
+            reason = f"no-progress-for-{int(stale)}s-and-mqtt-down-{int(offline_duration)}s"
+            force_reboot(reason)
 
         time.sleep(HEALTH_CHECK_INTERVAL)
 
