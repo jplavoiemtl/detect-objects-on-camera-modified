@@ -52,12 +52,6 @@ def _setup_socketio():
             """Catch all events to find frame data."""
             _process_frame_data(data)
 
-        # # Common video frame event names
-        # for event_name in ["frame", "image", "video", "snapshot", "data", "stream"]:
-        #     @_sio_client.on(event_name)
-        #     def on_frame_event(data, name=event_name):
-        #         _process_frame_data(data)
-
         return True
     except ImportError:
         print("[CAPTURE] Socket.IO client not available")
