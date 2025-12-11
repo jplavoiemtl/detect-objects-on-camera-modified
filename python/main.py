@@ -74,6 +74,8 @@ def heartbeat():
         detection_age = current_time - last_detection_time
         status = "active" if detection_age <= WATCHDOG_THRESHOLD else "idle"
 
+        timestamp_str = datetime.now(LOCAL_TIMEZONE).strftime("%d %b %Y, %H:%M:%S")
+
         safe_publish(
             STATUS_TOPIC,
             json.dumps({
@@ -85,7 +87,7 @@ def heartbeat():
             }),
             retain=True
         )
-        print(f"[HEARTBEAT] status={status} last_detection_age={int(detection_age)}s payload_topic={STATUS_TOPIC}")
+        print(f"{timestamp_str} [HEARTBEAT] status={status} last_detection_age={int(detection_age)}s payload_topic={STATUS_TOPIC}")
         time.sleep(60)
 
 # Configuration
