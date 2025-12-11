@@ -1,13 +1,10 @@
-from arduino.app_utils import App, Bridge # type: ignore
-from arduino.app_bricks.web_ui import WebUI # type: ignore
-from arduino.app_bricks.video_objectdetection import VideoObjectDetection # type: ignore
+from arduino.app_utils import App, Bridge  # type: ignore
+from arduino.app_bricks.web_ui import WebUI  # type: ignore
+from arduino.app_bricks.video_objectdetection import VideoObjectDetection  # type: ignore
 from threading import Timer
-
-from mqtt_secrets import SERVERMQTT, SERVERPORT, USERNAME, KEY, CLIENT_ID
 
 import time
 import json
-import paho.mqtt.client as mqtt  # type: ignore
 import threading
 import signal
 import sys
@@ -16,127 +13,23 @@ from datetime import datetime
 import cv2  # type: ignore
 import pytz  # type: ignore
 
+from mqtt_client import (
+    CLIENT_ID,
+    MQTT_DETECTION_TOPIC,
+    STATUS_TOPIC,
+    get_client,
+    mqtt_connect_with_retry,
+    safe_publish,
+)
+from health_monitor import mark_progress, start_health_monitor
+
 # Timezone configuration - change this to your timezone
 LOCAL_TIMEZONE = pytz.timezone('America/Montreal')
 
-# ================= MQTT CONFIG =================
-STATUS_TOPIC = "unoq/status"
-MQTT_DETECTION_TOPIC = "unoq/detection"
-
-mqtt_client = mqtt.Client(client_id=CLIENT_ID)
-mqtt_client.username_pw_set(USERNAME, KEY)
-
-# LWT must be set BEFORE connect
-mqtt_client.will_set(
-    STATUS_TOPIC,
-    json.dumps({"device": CLIENT_ID, "status": "offline"}),
-    retain=True
-)
-
-mqtt_connected = False
-
-def _on_mqtt_disconnect(_client, _userdata, rc):
-    """MQTT disconnect handler to track connectivity."""
-    global mqtt_connected
-    mqtt_connected = False
-    print(f"[MQTT] disconnected (rc={rc})")
-
-mqtt_client.on_disconnect = _on_mqtt_disconnect
-
-def safe_publish(topic: str, payload: str, retain: bool = False) -> bool:
-    """Publish with error handling to avoid crashing the main loop."""
-    try:
-        mqtt_client.publish(topic, payload, retain=retain)
-        return True
-    except Exception as e:
-        print(f"[MQTT] publish failed topic={topic}: {e}")
-        return False
-
-
-def mqtt_connect_with_retry(max_attempts: int = 3, backoff: int = 2) -> bool:
-    """Connect to MQTT broker with basic retry/backoff."""
-    global mqtt_connected
-    for attempt in range(1, max_attempts + 1):
-        try:
-            mqtt_client.connect(SERVERMQTT, SERVERPORT, 60)
-            mqtt_client.loop_start()
-            print(f"✅ MQTT connected to {SERVERMQTT}:{SERVERPORT} as {CLIENT_ID}")
-            safe_publish(
-                STATUS_TOPIC,
-                json.dumps({"device": CLIENT_ID, "status": "online"}),
-                retain=True
-            )
-            mqtt_connected = True
-            return True
-        except Exception as e:
-            print(f"[MQTT] connect attempt {attempt}/{max_attempts} failed: {e}")
-            time.sleep(backoff)
-            backoff = min(backoff * 2, 30)
-    print("[MQTT] giving up after retries; MQTT features will be degraded")
-    mqtt_connected = False
-    return False
-
-mqtt_connected = mqtt_connect_with_retry()
+# Initialize MQTT connection
+mqtt_connect_with_retry()
 
 # ================= HEARTBEAT THREAD =================
-
-last_progress_time = time.time()
-
-def mark_progress(reason: str = ""):
-    """Track activity for watchdog decisions."""
-    global last_progress_time
-    last_progress_time = time.time()
-    if reason:
-        print(f"[WATCHDOG] progress: {reason}")
-
-def force_reboot(reason: str):
-    """Force a board reboot to recover from a stuck or offline state."""
-    print(f"[WATCHDOG] Rebooting device due to: {reason}")
-    # Attempt a clean MQTT offline publish before rebooting
-    try:
-        safe_publish(
-            STATUS_TOPIC,
-            json.dumps({"device": CLIENT_ID, "status": "offline"}),
-            retain=True
-        )
-        mqtt_client.loop_stop()
-    except Exception as e:
-        print(f"[WATCHDOG] Error during reboot prep: {e}")
-
-    # Flush filesystem buffers if available
-    try:
-        os.sync()  # type: ignore[attr-defined]
-    except Exception:
-        pass
-
-    # Trigger reboot; on failure, exit so system supervisor can restart us
-    try:
-        os.system("reboot")
-        time.sleep(5)
-    finally:
-        os._exit(1)
-
-HEALTH_CHECK_INTERVAL = 30          # seconds between health checks
-REBOOT_GRACE_SECONDS = 5 * 60       # if no progress for this long AND MQTT down, reboot
-
-def health_monitor():
-    """Periodic health check: try reconnects, and reboot if stuck offline."""
-    global mqtt_connected
-    while True:
-        now = time.time()
-        stale = now - last_progress_time
-
-        # Try to heal MQTT connectivity if lost
-        if not mqtt_connected:
-            print("[WATCHDOG] MQTT down; attempting reconnect...")
-            mqtt_connected = mqtt_connect_with_retry(max_attempts=2, backoff=2)
-
-        # If we've been stale for too long and still offline, reboot
-        if stale >= REBOOT_GRACE_SECONDS and not mqtt_connected:
-            force_reboot(f"no-progress-for-{int(stale)}s-and-mqtt-down")
-
-        time.sleep(HEALTH_CHECK_INTERVAL)
-
 
 def heartbeat():
     while True:
@@ -624,7 +517,7 @@ WATCHDOG_THRESHOLD = 90  # Seconds since last detection to consider the system i
 
 # Start heartbeat after state is initialized to avoid NameError in thread
 threading.Thread(target=heartbeat, daemon=True).start()
-threading.Thread(target=health_monitor, daemon=True).start()
+start_health_monitor()
 
 
 def set_led(state: bool):
@@ -777,8 +670,9 @@ def shutdown_handler(signum, frame):
             json.dumps({"device": CLIENT_ID, "status": "offline"}),
             retain=True
         )
-        mqtt_client.disconnect()
-        mqtt_client.loop_stop()
+        client = get_client()
+        client.disconnect()
+        client.loop_stop()
         print("✅ MQTT disconnected and offline status sent.")
     except Exception as e:
         print(f"Error during MQTT shutdown: {e}")
