@@ -356,16 +356,18 @@ html, body {
     }
 
     .detection-info {
-        flex-wrap: wrap;
-        justify-content: center;
+        flex-wrap: nowrap;
+        justify-content: flex-start;
+        gap: 8px;
         font-size: 0.75rem;
+        white-space: nowrap;
     }
     
     .info-time {
-        margin-left: 0;
-        width: 100%;
-        text-align: center;
-        margin-top: 2px;
+        margin-left: auto;
+        width: auto;
+        text-align: right;
+        margin-top: 0;
     }
 
     .live-datetime {
