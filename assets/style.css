@@ -264,6 +264,14 @@ html, body {
     margin-left: auto;
 }
 
+.live-datetime {
+    text-align: center;
+    font-size: 0.9rem;
+    color: #c5d1de;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.02em;
+}
+
 /* Saved image wrapper (matches iframe dimensions) */
 #saved-image-wrapper {
     display: none;
@@ -358,6 +366,10 @@ html, body {
         width: 100%;
         text-align: center;
         margin-top: 2px;
+    }
+
+    .live-datetime {
+        font-size: 0.82rem;
     }
     
     /* Adjust video container padding for mobile */

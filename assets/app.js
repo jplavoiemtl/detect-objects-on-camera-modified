@@ -18,6 +18,7 @@ const infoTime = document.getElementById('infoTime');
 const iframeWrapper = document.getElementById('iframe-wrapper');
 const savedImageWrapper = document.getElementById('saved-image-wrapper');
 const savedImage = document.getElementById('savedImage');
+const liveDateTime = document.getElementById('liveDateTime');
 
 // History state
 let viewMode = 'live'; // 'live' | 'history'
@@ -28,6 +29,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initControls();
     initNavigation();
     initSocketIO();
+    initLiveDateTime();
 });
 
 function initControls() {
@@ -331,4 +333,35 @@ function handleDetectionSaved(payload) {
         updateButtonStates();
         updatePositionIndicator();
     }
+}
+
+function initLiveDateTime() {
+    if (!liveDateTime) return;
+
+    const update = () => {
+        liveDateTime.textContent = formatDateTimeForDisplay(new Date());
+    };
+
+    // Initial paint
+    update();
+
+    // Align to the next minute boundary, then update every minute
+    const now = new Date();
+    const msToNextMinute = Math.max(0, (60 - now.getSeconds()) * 1000 - now.getMilliseconds());
+
+    setTimeout(() => {
+        update();
+        setInterval(update, 60 * 1000);
+    }, msToNextMinute);
+}
+
+function formatDateTimeForDisplay(date) {
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const day = String(date.getDate());
+    const month = months[date.getMonth()];
+    const year = date.getFullYear();
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+
+    return `${day} ${month} ${year}, ${hours}:${minutes}`;
 }
