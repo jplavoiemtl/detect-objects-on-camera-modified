@@ -76,7 +76,7 @@ html, body {
     
     /* Position the iframe so the video area aligns with the wrapper window */
     position: absolute;
-    top: -35px;    /* Adjusted value for correct placement -30px is the height of the header */
+    top: -23px;    /* Shifted slightly down to hide the white band */
     left: -80px;   /* Center the 640px video horizontally: (800-640)/2 = 80 */
 }
 
