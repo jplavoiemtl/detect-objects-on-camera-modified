@@ -43,19 +43,28 @@ html, body {
     background: #000000;
 }
 
-/* 
+/*
  * Iframe clipping technique:
  * The Edge Impulse /embed page has UI chrome around the video.
  * We use a wrapper with overflow:hidden to show only the video portion.
- * 
- * The video is now 640x480 pixels.
- * We scale it up by ~1.25x to display at approximately 800x600.
+ *
+ * The video is now 640x480 pixels (4:3). On desktop we scale to ~800x600.
+ * On small screens, the wrapper shrinks to ~90vw to keep the full frame visible.
  */
+
+:root {
+    --video-width: 640px;
+    --video-height: 480px;
+    --video-scale: 1.25;
+    --iframe-width: 800px;
+    --iframe-height: 900px;
+    --iframe-top: -23px;
+}
 
 #iframe-wrapper {
     display: none;
-    width: 640px;
-    height: 480px;
+    width: var(--video-width);
+    height: var(--video-height);
     overflow: hidden;
     position: relative;
     background: #000000;
@@ -63,21 +72,21 @@ html, body {
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
     
     /* Scale up the entire wrapper and its contents to ~800x600 */
-    transform: scale(1.25);
+    transform: scale(var(--video-scale));
     transform-origin: center center;
 }
 
 #dynamicIframe {
     /* Make iframe large enough to contain the full embed page */
-    width: 800px;
-    height: 900px;
+    width: var(--iframe-width);
+    height: var(--iframe-height);
     border: none;
     background: #000000;
     
     /* Position the iframe so the video area aligns with the wrapper window */
     position: absolute;
-    top: -23px;    /* Shifted slightly down to hide the white band */
-    left: -80px;   /* Center the 640px video horizontally: (800-640)/2 = 80 */
+    top: var(--iframe-top);    /* Shifted slightly down to hide the white band */
+    left: calc((var(--iframe-width) - var(--video-width)) / -2);   /* Center horizontally */
 }
 
 /* Placeholder styling */
@@ -88,13 +97,13 @@ html, body {
     align-items: center;
     gap: 18px;
     color: #adbac7;
-    width: 640px;
-    height: 480px;
+    width: var(--video-width);
+    height: var(--video-height);
     background: #111111;
     border-radius: 8px;
     
     /* Scale placeholder to match video size */
-    transform: scale(1.25);
+    transform: scale(var(--video-scale));
     transform-origin: center center;
 }
 
@@ -275,8 +284,8 @@ html, body {
 /* Saved image wrapper (matches iframe dimensions) */
 #saved-image-wrapper {
     display: none;
-    width: 640px;
-    height: 480px;
+    width: var(--video-width);
+    height: var(--video-height);
     overflow: hidden;
     position: relative;
     background: #111111;
@@ -284,7 +293,7 @@ html, body {
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
     
     /* Scale up to match live video size */
-    transform: scale(1.25);
+    transform: scale(var(--video-scale));
     transform-origin: center center;
 }
 
@@ -296,20 +305,37 @@ html, body {
 
 /* Responsive scaling for smaller screens */
 @media (max-width: 850px) {
+    :root {
+        /* Shrink to ~90% of viewport width while keeping 4:3 aspect */
+        --video-width: 90vw;
+        --video-height: calc(90vw * 0.75);
+        --video-scale: 1.0;
+        /* Keep iframe only modestly larger than the video to avoid zoom-in */
+        --iframe-width: calc(var(--video-width) + 62px);
+        --iframe-height: calc(var(--video-height) + 142px);
+        --iframe-top: -24px;
+    }
+    
     #iframe-wrapper {
         /* Reduce scale on smaller screens */
-        transform: scale(1.0);
+        transform: scale(var(--video-scale));
         border-radius: 0;
     }
     
     .camera-status {
-        transform: scale(1.0);
+        transform: scale(var(--video-scale));
         border-radius: 0;
     }
     
     #saved-image-wrapper {
-        transform: scale(1.0);
+        transform: scale(var(--video-scale));
         border-radius: 0;
+    }
+    
+    #dynamicIframe {
+        /* Recenter for the narrower wrapper */
+        left: calc((var(--iframe-width) - var(--video-width)) / -2);
+        top: var(--iframe-top);
     }
     
     /* Compact top controls on mobile */
