@@ -31,7 +31,12 @@ from persistence import (
     rewrite_log_file,
     save_detection_to_log,
 )
-from capture import capture_and_save_detection, start_capture_reconnect_daemon
+from capture import (
+    capture_and_save_detection,
+    capture_frame,
+    scale_bbox_to_frame,
+    start_capture_reconnect_daemon,
+)
 from health_monitor import mark_progress, start_health_monitor
 from ui_handlers import (
     emit_detected_labels,
@@ -194,21 +199,29 @@ def on_detections(detections: dict):
         last_detection_time = current_time
         confidence = det.get("confidence", 0)
         mark_progress("detection")
+        bbox_xyxy = det.get("bounding_box_xyxy", [])
+        frame = capture_frame()
+        bbox_scaled = (
+            scale_bbox_to_frame(
+                bbox_xyxy, frame.shape if frame is not None else None
+            )
+            if bbox_xyxy
+            else None
+        )
 
         # Turn LED on if not already on
         if not led_on:
             set_led(True)
 
-            # Correct handling for YOLO XYXY format
-            bbox_xyxy = det.get("bounding_box_xyxy", [])
-
-            if len(bbox_xyxy) == 4:
-                x1, y1, x2, y2 = bbox_xyxy
+            # Normalize bbox to current frame dimensions when available
+            bbox_source = bbox_scaled if bbox_scaled else bbox_xyxy
+            if bbox_source and len(bbox_source) == 4:
+                x1, y1, x2, y2 = bbox_source
                 bbox = {
                     "x": int(x1),
                     "y": int(y1),
                     "w": int(x2 - x1),
-                    "h": int(y2 - y1)
+                    "h": int(y2 - y1),
                 }
             else:
                 bbox = {"x": 0, "y": 0, "w": 0, "h": 0}
@@ -232,6 +245,7 @@ def on_detections(detections: dict):
                 detection_history=detection_history,
                 next_detection_id=next_detection_id,
                 timezone=LOCAL_TIMEZONE,
+                frame=frame,
             )
             if entry:
                 emit_detection_saved(ui, detection_history, entry)

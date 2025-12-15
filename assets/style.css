@@ -48,22 +48,22 @@ html, body {
  * The Edge Impulse /embed page has UI chrome around the video.
  * We use a wrapper with overflow:hidden to show only the video portion.
  * 
- * The video is 416x416 pixels (YOLO detection size).
- * We scale it up by ~1.92x to display at approximately 800x800.
+ * The video is now 640x480 pixels.
+ * We scale it up by ~1.25x to display at approximately 800x600.
  */
 
 #iframe-wrapper {
     display: none;
-    width: 416px;
-    height: 416px;
+    width: 640px;
+    height: 480px;
     overflow: hidden;
     position: relative;
     background: #000000;
     border-radius: 8px;
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
     
-    /* Scale up the entire wrapper and its contents to ~800x800 */
-    transform: scale(1.92);
+    /* Scale up the entire wrapper and its contents to ~800x600 */
+    transform: scale(1.25);
     transform-origin: center center;
 }
 
@@ -77,7 +77,7 @@ html, body {
     /* Position the iframe so the video area aligns with the wrapper window */
     position: absolute;
     top: -35px;    /* Adjusted value for correct placement -30px is the height of the header */
-    left: -192px;  /* Center the video horizontally: (800-416)/2 = 192 */
+    left: -80px;   /* Center the 640px video horizontally: (800-640)/2 = 80 */
 }
 
 /* Placeholder styling */
@@ -88,13 +88,13 @@ html, body {
     align-items: center;
     gap: 18px;
     color: #adbac7;
-    width: 416px;
-    height: 416px;
+    width: 640px;
+    height: 480px;
     background: #111111;
     border-radius: 8px;
     
     /* Scale placeholder to match video size */
-    transform: scale(1.92);
+    transform: scale(1.25);
     transform-origin: center center;
 }
 
@@ -275,8 +275,8 @@ html, body {
 /* Saved image wrapper (matches iframe dimensions) */
 #saved-image-wrapper {
     display: none;
-    width: 416px;
-    height: 416px;
+    width: 640px;
+    height: 480px;
     overflow: hidden;
     position: relative;
     background: #111111;
@@ -284,7 +284,7 @@ html, body {
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
     
     /* Scale up to match live video size */
-    transform: scale(1.92);
+    transform: scale(1.25);
     transform-origin: center center;
 }
 

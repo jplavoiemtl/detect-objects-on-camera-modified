@@ -1,9 +1,9 @@
 name: detect-objects-on-camera-modified
 include:
-- /home/arduino/.local/share/arduino-app-cli/assets/0.5.0/compose/arduino/video_object_detection/brick_compose.yaml
+- /home/arduino/.local/share/arduino-app-cli/assets/0.6.1/compose/arduino/video_object_detection/brick_compose.yaml
 services:
   main:
-    image: ghcr.io/arduino/app-bricks/python-apps-base:0.5.0
+    image: ghcr.io/arduino/app-bricks/python-apps-base:0.6.1
     depends_on:
       ei-video-obj-detection-runner:
         condition: service_healthy
@@ -17,6 +17,9 @@ services:
     - type: bind
       source: /dev/v4l
       target: /dev/v4l
+    - type: bind
+      source: /dev/snd/by-id
+      target: /dev/snd/by-id
     - type: bind
       source: /sys/class/leds/blue:user
       target: /sys/class/leds/blue:user

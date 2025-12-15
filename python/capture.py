@@ -1,4 +1,5 @@
 import base64
+import math
 import os
 import threading
 import time
@@ -17,6 +18,7 @@ from persistence import (
 
 VIDEO_STREAM_PORT = 4912
 VIDEO_WS_HOST = "ei-video-obj-detection-runner"  # Docker container name
+MODEL_INPUT_SIZE = 416  # YOLO input dimension used by the Brick
 
 # Frame capture state
 _sio_initialized = False
@@ -181,6 +183,66 @@ def start_capture_reconnect_daemon(reconnect_interval: float = 5.0):
     threading.Thread(target=_reconnect_loop, daemon=True).start()
 
 
+def scale_bbox_to_frame(
+    bbox_xyxy,
+    frame_shape: Optional[Tuple[int, int, int]],
+    model_input_size: int = MODEL_INPUT_SIZE,
+) -> Optional[List[float]]:
+    """Scale bbox coordinates to the captured frame, handling normalization and letterboxing.
+
+    Supports three cases:
+    - Normalized [0,1] coordinates
+    - Pixel coordinates in the model's square input size (with possible letterboxing)
+    - Pixel coordinates already in frame space
+    """
+    if not bbox_xyxy or frame_shape is None or len(frame_shape) < 2:
+        return None
+
+    try:
+        coords = [float(c) for c in bbox_xyxy]
+    except (TypeError, ValueError):
+        return None
+
+    if len(coords) != 4 or any(math.isnan(c) or math.isinf(c) for c in coords):
+        return None
+
+    h, w = frame_shape[:2]
+    if h <= 0 or w <= 0:
+        return None
+
+    x1, y1, x2, y2 = coords
+    max_coord = max(coords)
+    epsilon = 1e-6
+
+    # Normalized coordinates [0,1]
+    if 0 <= max_coord <= 1.0 + epsilon:
+        x1, x2 = x1 * w, x2 * w
+        y1, y2 = y1 * h, y2 * h
+    # Model-space coordinates (e.g., 416x416) with possible letterboxing
+    elif max_coord <= model_input_size + epsilon:
+        scale = min(model_input_size / w, model_input_size / h)
+        scaled_w = w * scale
+        scaled_h = h * scale
+        pad_x = (model_input_size - scaled_w) / 2.0
+        pad_y = (model_input_size - scaled_h) / 2.0
+        x1 = (x1 - pad_x) / scale
+        x2 = (x2 - pad_x) / scale
+        y1 = (y1 - pad_y) / scale
+        y2 = (y2 - pad_y) / scale
+    # Else: assume already in frame pixel space
+
+    # Clamp and validate
+    x1 = max(0.0, min(w - 1, x1))
+    y1 = max(0.0, min(h - 1, y1))
+    x2 = max(0.0, min(w - 1, x2))
+    y2 = max(0.0, min(h - 1, y2))
+
+    if x2 <= x1 or y2 <= y1:
+        return None
+
+    return [x1, y1, x2, y2]
+
+
 def capture_and_save_detection(
     label: str,
     confidence: float,
@@ -189,6 +251,8 @@ def capture_and_save_detection(
     detection_history: List[dict],
     next_detection_id: int,
     timezone,
+    frame=None,
+    model_input_size: int = MODEL_INPUT_SIZE,
 ) -> Tuple[Optional[dict], int]:
     """Capture current frame and save as a detection image.
 
@@ -200,10 +264,14 @@ def capture_and_save_detection(
     current_time = time.time()
 
     # Capture frame
-    frame = capture_frame()
+    frame = frame if frame is not None else capture_frame()
     if frame is None:
         print("[CAPTURE] No frame available, skipping save")
         return None, next_detection_id
+
+    bbox_scaled = scale_bbox_to_frame(
+        bbox_xyxy, frame.shape, model_input_size=model_input_size
+    )
 
     # Generate timestamped filename using local timezone
     now = datetime.now(timezone)
@@ -212,13 +280,11 @@ def capture_and_save_detection(
     filepath = os.path.join(IMAGES_DIR, filename)
 
     # Draw bounding box if provided
-    if bbox_xyxy and len(bbox_xyxy) == 4:
-        x1, y1, x2, y2 = bbox_xyxy
-        # Convert to int and clamp to frame bounds
-        h, w = frame.shape[:2]
-        x1, y1 = max(0, int(x1)), max(0, int(y1))
-        x2, y2 = min(w - 1, int(x2)), min(h - 1, int(y2))
-        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 1)
+    if bbox_scaled:
+        x1, y1, x2, y2 = bbox_scaled
+        cv2.rectangle(
+            frame, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 0), 1
+        )
 
     # Save image
     try:
@@ -236,6 +302,8 @@ def capture_and_save_detection(
         "timestamp": current_time,
         "time_formatted": now.strftime("%d %b %Y, %H:%M:%S").lstrip("0"),
     }
+    if bbox_scaled:
+        entry["bbox_xyxy"] = [int(x1), int(y1), int(x2), int(y2)]
 
     # Add to history
     detection_history.append(entry)
