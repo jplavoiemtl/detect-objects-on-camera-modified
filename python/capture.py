@@ -23,11 +23,21 @@ MODEL_INPUT_SIZE = 416  # YOLO input dimension used by the Brick
 # Frame capture state
 _sio_initialized = False
 _latest_frame = None
+_latest_frame_time = 0.0
 _sio_connected = False
 _sio_client = None
 _last_connect_attempt = 0.0
 _reconnect_interval = 5.0
 _reconnector_started = False
+_stale_watchdog_started = False
+
+# Staleness handling
+STALE_FRAME_MAX_AGE = 5.0  # seconds
+FRESH_RETRY_TOTAL = 0.75   # seconds
+FRESH_RETRY_SLEEP = 0.05   # seconds
+# If no fresh frame arrives for this long while "connected", force reconnect
+STALE_RECONNECT_AGE = 30.0  # seconds
+STALE_CHECK_INTERVAL = 5.0  # seconds
 
 
 def _setup_socketio():
@@ -47,8 +57,10 @@ def _setup_socketio():
 
         @_sio_client.event
         def disconnect():
-            global _sio_connected
+            global _sio_connected, _latest_frame, _latest_frame_time
             _sio_connected = False
+            _latest_frame = None
+            _latest_frame_time = 0.0
             print("[CAPTURE] Socket.IO disconnected")
 
         @_sio_client.on("*")
@@ -67,7 +79,7 @@ def _setup_socketio():
 
 def _process_frame_data(data):
     """Process incoming frame data from Socket.IO."""
-    global _latest_frame
+    global _latest_frame, _latest_frame_time
     try:
         if not isinstance(data, dict):
             return
@@ -91,8 +103,16 @@ def _process_frame_data(data):
         
         if frame is not None:
             _latest_frame = frame
+            _latest_frame_time = time.time()
     except Exception:
         pass
+
+
+def _frame_age(now: float) -> float:
+    """Return age in seconds of the latest frame, or a large number if none."""
+    if _latest_frame_time <= 0:
+        return float("inf")
+    return now - _latest_frame_time
 
 
 def _connect_socketio():
@@ -150,9 +170,14 @@ def capture_frame():
         else:
             print("[CAPTURE] Socket.IO connection failed")
 
-    # Return latest frame if available
+    # Return latest frame if available and fresh
     if _latest_frame is not None:
-        return _latest_frame.copy()
+        age = _frame_age(now)
+        if age <= STALE_FRAME_MAX_AGE:
+            return _latest_frame.copy()
+        else:
+            # Stale frame, treat as unavailable to force retry
+            print(f"[CAPTURE] Stale frame age={age:.1f}s; ignoring")
 
     return None
 
@@ -173,14 +198,50 @@ def _reconnect_loop():
         time.sleep(1.0)
 
 
+def _stale_watchdog_loop():
+    """Force reconnect if we appear connected but no fresh frames arrive for too long."""
+    global _latest_frame, _latest_frame_time, _last_connect_attempt, _sio_connected
+    while True:
+        time.sleep(STALE_CHECK_INTERVAL)
+        now = time.time()
+        age = _frame_age(now)
+        if _sio_connected and age > STALE_RECONNECT_AGE:
+            print(f"[CAPTURE] Stale frame detected (age={age:.1f}s); forcing reconnect")
+            try:
+                _sio_connected = False
+                if _sio_client is not None:
+                    _sio_client.disconnect()
+            except Exception:
+                pass
+            _latest_frame = None
+            _latest_frame_time = 0.0
+            # Trigger immediate reconnect attempt
+            _last_connect_attempt = now - _reconnect_interval
+
+
 def start_capture_reconnect_daemon(reconnect_interval: float = 5.0):
     """Start background reconnect attempts to keep the video stream alive."""
-    global _reconnect_interval, _reconnector_started
+    global _reconnect_interval, _reconnector_started, _stale_watchdog_started
     if _reconnector_started:
         return
     _reconnector_started = True
     _reconnect_interval = max(1.0, reconnect_interval)
     threading.Thread(target=_reconnect_loop, daemon=True).start()
+    if not _stale_watchdog_started:
+        _stale_watchdog_started = True
+        threading.Thread(target=_stale_watchdog_loop, daemon=True).start()
+
+
+def _get_fresh_frame(timeout: float = FRESH_RETRY_TOTAL, sleep_s: float = FRESH_RETRY_SLEEP):
+    """Attempt to obtain a fresh frame within the timeout window."""
+    deadline = time.time() + max(0.0, timeout)
+    while True:
+        frame = capture_frame()
+        if frame is not None:
+            return frame
+        if time.time() >= deadline:
+            return None
+        time.sleep(max(0.0, sleep_s))
 
 
 def scale_bbox_to_frame(
@@ -263,10 +324,10 @@ def capture_and_save_detection(
     """
     current_time = time.time()
 
-    # Capture frame
-    frame = frame if frame is not None else capture_frame()
+    # Capture frame (prefer provided, else try fresh)
+    frame = frame if frame is not None else _get_fresh_frame()
     if frame is None:
-        print("[CAPTURE] No frame available, skipping save")
+        print("[CAPTURE] No fresh frame available, skipping save")
         return None, next_detection_id
 
     bbox_scaled = scale_bbox_to_frame(
