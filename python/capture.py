@@ -1,6 +1,7 @@
 import base64
 import math
 import os
+import socket
 import threading
 import time
 from datetime import datetime
@@ -16,8 +17,9 @@ from persistence import (
     save_detection_to_log,
 )
 
-VIDEO_STREAM_PORT = 4912
-VIDEO_WS_HOST = "ei-video-obj-detection-runner"  # Docker container name
+# Use environment variables if available, otherwise defaults
+VIDEO_STREAM_PORT = int(os.environ.get("VIDEO_RUNNER_PORT", 4912))
+VIDEO_WS_HOST = os.environ.get("VIDEO_RUNNER_HOST", "ei-video-obj-detection-runner")
 MODEL_INPUT_SIZE = 416  # YOLO input dimension used by the Brick
 
 # Frame capture state
@@ -46,7 +48,9 @@ def _setup_socketio():
 
     try:
         import socketio  # type: ignore
+        import engineio  # type: ignore
 
+        # Set logger=False and engineio_logger=False to keep the terminal clean
         _sio_client = socketio.Client(logger=False, engineio_logger=False)
 
         @_sio_client.event
@@ -64,9 +68,15 @@ def _setup_socketio():
             print("[CAPTURE] Socket.IO disconnected")
 
         @_sio_client.on("*")
-        def catch_all(event, data):
+        def catch_all(event, *args):
             """Catch all events to find frame data."""
-            _process_frame_data(data)
+            if _latest_frame is None:
+                # Log only the first few events to avoid flooding, until we get a frame
+                pass
+            
+            # Process all arguments passed with the event
+            for arg in args:
+                _process_frame_data(arg)
 
         return True
     except ImportError:
@@ -81,14 +91,22 @@ def _process_frame_data(data):
     """Process incoming frame data from Socket.IO."""
     global _latest_frame, _latest_frame_time
     try:
-        if not isinstance(data, dict):
+        # If data is already a numpy array (e.g. from a brick directly)
+        if isinstance(data, np.ndarray):
+            _latest_frame = data.copy()
+            _latest_frame_time = time.time()
             return
 
-        # Find image data using any common key
-        img_data = next(
-            (data[k] for k in ["frame", "image", "data", "img", "jpeg", "jpg", "png"] if k in data),
-            None
-        )
+        # data might be the dict or the raw base64 string
+        img_data = None
+        if isinstance(data, dict):
+            # Find image data using any common key
+            img_data = next(
+                (data[k] for k in ["frame", "image", "data", "img", "jpeg", "jpg", "png"] if k in data),
+                None
+            )
+        elif isinstance(data, str):
+            img_data = data
         
         if not isinstance(img_data, str):
             return
@@ -115,6 +133,19 @@ def _frame_age(now: float) -> float:
     return now - _latest_frame_time
 
 
+def _get_local_ip():
+    """Get the local IP address of this device."""
+    try:
+        # This doesn't actually connect, just gets the local interface IP used for routing
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return None
+
+
 def _connect_socketio():
     """Connect to the video stream via Socket.IO."""
     global _sio_client, _sio_connected
@@ -125,22 +156,50 @@ def _connect_socketio():
     if _sio_client is None and not _setup_socketio():
         return False
 
+    # Attempt a range of possible hostnames and IPs
     sio_urls = [
         f"http://{VIDEO_WS_HOST}:{VIDEO_STREAM_PORT}",
-        f"http://172.17.0.1:{VIDEO_STREAM_PORT}",
+        f"http://127.0.0.1:{VIDEO_STREAM_PORT}",
         f"http://localhost:{VIDEO_STREAM_PORT}",
     ]
+
+    local_ip = _get_local_ip()
+    if local_ip:
+        sio_urls.append(f"http://{local_ip}:{VIDEO_STREAM_PORT}")
+    
+    sio_urls.extend([
+        f"http://172.17.0.1:{VIDEO_STREAM_PORT}",
+        f"http://host.docker.internal:{VIDEO_STREAM_PORT}",
+        f"http://unoq.local:{VIDEO_STREAM_PORT}",
+    ])
+
+    # Remove duplicates while preserving order
+    sio_urls = list(dict.fromkeys(sio_urls))
 
     for url in sio_urls:
         try:
             print(f"[CAPTURE] Trying Socket.IO: {url}")
-            _sio_client.connect(url, wait_timeout=3)
-            time.sleep(0.5)
+            # Try connecting with a slightly longer timeout
+            _sio_client.connect(
+                url, 
+                wait_timeout=10
+            )
+            time.sleep(1.0) # Give it a moment to stabilize
 
             if _sio_connected:
+                print(f"[CAPTURE] ✓ Connected successfully to {url}")
                 return True
         except Exception as e:
-            print(f"[CAPTURE] Socket.IO connection failed for {url}: {type(e).__name__}")
+            print(f"[CAPTURE] Socket.IO connection failed for {url}: {type(e).__name__}: {e}")
+            # Try a direct HTTP frame capture as a fallback if Socket.IO fails
+            frame = _try_http_capture(url)
+            if frame is not None:
+                global _latest_frame, _latest_frame_time
+                _latest_frame = frame
+                _latest_frame_time = time.time()
+                _sio_connected = True # Mock connection to stop retries
+                print(f"[CAPTURE] ✓ HTTP capture fallback succeeded for {url}")
+                return True
         finally:
             if not _sio_connected:
                 try:
@@ -149,6 +208,25 @@ def _connect_socketio():
                     pass
 
     return False
+
+
+def _try_http_capture(base_url: str) -> Optional[np.ndarray]:
+    """Attempt to capture a single frame via common HTTP endpoints."""
+    try:
+        import requests
+        # Common endpoints for frame capture in these Bricks
+        for path in ["/frame", "/snapshot", "/latest"]:
+            try:
+                resp = requests.get(f"{base_url}{path}", timeout=1.0)
+                if resp.status_code == 200 and resp.headers.get("Content-Type", "").startswith("image/"):
+                    frame = cv2.imdecode(np.frombuffer(resp.content, np.uint8), cv2.IMREAD_COLOR)
+                    if frame is not None:
+                        return frame
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return None
 
 
 def capture_frame():
