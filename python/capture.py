@@ -38,7 +38,7 @@ STALE_FRAME_MAX_AGE = 5.0  # seconds
 FRESH_RETRY_TOTAL = 0.75   # seconds
 FRESH_RETRY_SLEEP = 0.05   # seconds
 # If no fresh frame arrives for this long while "connected", force reconnect
-STALE_RECONNECT_AGE = 30.0  # seconds
+STALE_RECONNECT_AGE = 15.0  # seconds
 STALE_CHECK_INTERVAL = 5.0  # seconds
 
 
@@ -190,6 +190,19 @@ def _connect_socketio():
                 print(f"[CAPTURE] ✓ Connected successfully to {url}")
                 return True
         except Exception as e:
+            # Handle the "Already connected" case which can happen if state gets out of sync
+            if "Already connected" in str(e):
+                if _sio_client.connected:
+                    _sio_connected = True
+                    print(f"[CAPTURE] ✓ Socket.IO already connected to {url}")
+                    return True
+                else:
+                    # If it says already connected but .connected is False, force a disconnect
+                    try:
+                        _sio_client.disconnect()
+                    except Exception:
+                        pass
+
             print(f"[CAPTURE] Socket.IO connection failed for {url}: {type(e).__name__}: {e}")
             # Try a direct HTTP frame capture as a fallback if Socket.IO fails
             frame = _try_http_capture(url)
@@ -231,7 +244,7 @@ def _try_http_capture(base_url: str) -> Optional[np.ndarray]:
 
 def capture_frame():
     """Capture a single frame from the video stream via Socket.IO."""
-    global _sio_initialized, _latest_frame, _last_connect_attempt
+    global _sio_initialized, _latest_frame, _last_connect_attempt, _sio_connected, _sio_client
 
     now = time.time()
 
@@ -257,12 +270,22 @@ def capture_frame():
             # Stale frame, treat as unavailable to force retry
             print(f"[CAPTURE] Stale frame age={age:.1f}s; ignoring")
 
+            # If the frame is EXTREMELY stale (e.g. > 10s), force a disconnect
+            if age > 10.0 and _sio_connected:
+                print(f"[CAPTURE] Frame extremely stale ({age:.1f}s); forcing disconnect")
+                try:
+                    _sio_connected = False
+                    if _sio_client:
+                        _sio_client.disconnect()
+                except Exception:
+                    pass
+
     return None
 
 
 def _reconnect_loop():
     """Background reconnect loop to recover the video stream when idle."""
-    global _sio_initialized, _last_connect_attempt
+    global _sio_initialized, _last_connect_attempt, _sio_connected
     while True:
         now = time.time()
         if not _sio_connected and (now - _last_connect_attempt) >= _reconnect_interval:
@@ -283,8 +306,12 @@ def _stale_watchdog_loop():
         time.sleep(STALE_CHECK_INTERVAL)
         now = time.time()
         age = _frame_age(now)
-        if _sio_connected and age > STALE_RECONNECT_AGE:
-            print(f"[CAPTURE] Stale frame detected (age={age:.1f}s); forcing reconnect")
+        # If we think we are connected but the client says otherwise, or if frames are too old
+        needs_reconnect = (_sio_connected and age > STALE_RECONNECT_AGE) or \
+                          (_sio_connected and _sio_client is not None and not _sio_client.connected)
+        
+        if needs_reconnect:
+            print(f"[CAPTURE] Stale connection or frame detected (age={age:.1f}s); forcing reconnect")
             try:
                 _sio_connected = False
                 if _sio_client is not None:
