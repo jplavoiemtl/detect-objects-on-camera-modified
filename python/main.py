@@ -302,7 +302,7 @@ ui.on_message(
 )
 emit_detected_labels(ui, detected_labels, DETECTION_LABEL)
 
-# ================= GRACEFUL SHUTDOWN =================
+# ================= GRACEFUL SHUTDOWN SECTION =================
 
 def shutdown_handler(signum, frame):
     """Handle shutdown signals to ensure clean exit."""
