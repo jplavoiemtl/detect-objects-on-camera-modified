@@ -1,10 +1,11 @@
-html, body {
+html,
+body {
     margin: 0;
     padding: 0;
     width: 100%;
     height: 100%;
-    background: #000000;
-    color: #fafbfc;
+    background: #1a1a1a;
+    color: #e0e0e0;
     font-family: 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', sans-serif;
     overflow: hidden;
 }
@@ -29,7 +30,7 @@ html, body {
     justify-content: center;
     width: 100vw;
     height: 100vh;
-    background: #000000;
+    background: #1a1a1a;
     /* Add padding to prevent overlap with top/bottom controls */
     padding-top: 60px;
     padding-bottom: 80px;
@@ -40,7 +41,7 @@ html, body {
     display: flex;
     justify-content: center;
     align-items: center;
-    background: #000000;
+    background: #1a1a1a;
 }
 
 /*
@@ -67,10 +68,10 @@ html, body {
     height: var(--video-height);
     overflow: hidden;
     position: relative;
-    background: #000000;
+    background: #1a1a1a;
     border-radius: 8px;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
-    
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.6);
+
     /* Scale up the entire wrapper and its contents to ~800x600 */
     transform: scale(var(--video-scale));
     transform-origin: center center;
@@ -81,12 +82,14 @@ html, body {
     width: var(--iframe-width);
     height: var(--iframe-height);
     border: none;
-    background: #000000;
-    
+    background: #1a1a1a;
+
     /* Position the iframe so the video area aligns with the wrapper window */
     position: absolute;
-    top: var(--iframe-top);    /* Shifted slightly down to hide the white band */
-    left: calc((var(--iframe-width) - var(--video-width)) / -2);   /* Center horizontally */
+    top: var(--iframe-top);
+    /* Shifted slightly down to hide the white band */
+    left: calc((var(--iframe-width) - var(--video-width)) / -2);
+    /* Center horizontally */
 }
 
 /* Placeholder styling */
@@ -99,9 +102,10 @@ html, body {
     color: #adbac7;
     width: var(--video-width);
     height: var(--video-height);
-    background: #111111;
+    background: #242424;
+    border: 1px solid #333333;
     border-radius: 8px;
-    
+
     /* Scale placeholder to match video size */
     transform: scale(var(--video-scale));
     transform-origin: center center;
@@ -139,18 +143,22 @@ html, body {
     display: flex;
     flex-direction: column;
     gap: 4px;
-    background: rgba(17, 17, 17, 0.9);
+    background: rgba(36, 36, 36, 0.85);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
     padding: 8px 12px;
     border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
-    color: #fafbfc;
+    color: #e0e0e0;
     z-index: 10;
     min-width: 240px;
 }
 
 #controls-top label {
-    font-size: 0.85rem;
-    color: #c5d1de;
+    font-size: 0.95rem;
+    color: #8b949e;
+    font-weight: 500;
 }
 
 /* Bottom controls: Navigation buttons and detection info */
@@ -162,11 +170,14 @@ html, body {
     display: flex;
     flex-direction: column;
     gap: 6px;
-    background: rgba(17, 17, 17, 0.9);
+    background: rgba(36, 36, 36, 0.85);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
     padding: 8px 12px;
     border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
-    color: #fafbfc;
+    color: #e0e0e0;
     z-index: 10;
     min-width: 280px;
 }
@@ -186,15 +197,17 @@ html, body {
     font-variant-numeric: tabular-nums;
     min-width: 3ch;
     text-align: right;
-    color: #9ecbff;
+    color: #58a6ff;
+    font-size: 1.1rem;
+    font-weight: 600;
 }
 
 #labelSelect {
     min-width: 160px;
     padding: 6px 8px;
-    background: #111111;
-    color: #fafbfc;
-    border: 1px solid #2e3b4e;
+    background: #242424;
+    color: #e0e0e0;
+    border: 1px solid #333333;
     border-radius: 6px;
 }
 
@@ -213,14 +226,15 @@ html, body {
 }
 
 .nav-btn {
-    padding: 6px 12px;
-    background: #1c2128;
-    color: #c5d1de;
-    border: 1px solid #2e3b4e;
-    border-radius: 6px;
-    font-size: 0.85rem;
+    padding: 8px 16px;
+    background: #333333;
+    color: #e0e0e0;
+    border: 1px solid #444444;
+    border-radius: 8px;
+    font-size: 0.95rem;
+    font-weight: 500;
     cursor: pointer;
-    transition: background 0.15s, border-color 0.15s;
+    transition: background 0.15s, border-color 0.15s, transform 0.1s;
 }
 
 .nav-btn:hover:not(:disabled) {
@@ -241,8 +255,9 @@ html, body {
 
 .position-indicator {
     margin-left: auto;
-    font-size: 0.85rem;
-    color: #9ecbff;
+    font-size: 0.95rem;
+    color: #58a6ff;
+    font-weight: 600;
     font-variant-numeric: tabular-nums;
 }
 
@@ -253,7 +268,7 @@ html, body {
     gap: 12px;
     margin-top: 8px;
     padding: 8px 10px;
-    background: #161b22;
+    background: #1a1a1a;
     border-radius: 6px;
     font-size: 0.85rem;
 }
@@ -288,10 +303,11 @@ html, body {
     height: var(--video-height);
     overflow: hidden;
     position: relative;
-    background: #111111;
+    background: #242424;
+    border: 1px solid #333333;
     border-radius: 8px;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
-    
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.6);
+
     /* Scale up to match live video size */
     transform: scale(var(--video-scale));
     transform-origin: center center;
@@ -315,29 +331,29 @@ html, body {
         --iframe-height: calc(var(--video-height) + 142px);
         --iframe-top: -24px;
     }
-    
+
     #iframe-wrapper {
         /* Reduce scale on smaller screens */
         transform: scale(var(--video-scale));
         border-radius: 0;
     }
-    
+
     .camera-status {
         transform: scale(var(--video-scale));
         border-radius: 0;
     }
-    
+
     #saved-image-wrapper {
         transform: scale(var(--video-scale));
         border-radius: 0;
     }
-    
+
     #dynamicIframe {
         /* Recenter for the narrower wrapper */
         left: calc((var(--iframe-width) - var(--video-width)) / -2);
         top: var(--iframe-top);
     }
-    
+
     /* Compact top controls on mobile */
     #controls-top {
         top: 8px;
@@ -345,11 +361,11 @@ html, body {
         min-width: 200px;
         max-width: 90vw;
     }
-    
+
     #controls-top label {
         font-size: 0.75rem;
     }
-    
+
     /* Bottom controls adjustments for mobile */
     #controls-bottom {
         bottom: 8px;
@@ -358,13 +374,14 @@ html, body {
         width: 100vw;
         max-width: none;
     }
-    
+
     .nav-row {
         justify-content: center;
-        flex-wrap: wrap; /* allow indicator to drop below buttons */
+        flex-wrap: wrap;
+        /* allow indicator to drop below buttons */
         gap: 4px;
     }
-    
+
     .nav-row .nav-btn {
         order: 1;
         flex: 0 0 auto;
@@ -372,7 +389,7 @@ html, body {
         font-size: 0.76rem;
         white-space: nowrap;
     }
-    
+
     .position-indicator {
         order: 2;
         flex-basis: 100%;
@@ -388,7 +405,7 @@ html, body {
         font-size: 0.75rem;
         white-space: nowrap;
     }
-    
+
     .info-time {
         margin-left: auto;
         width: auto;
@@ -399,7 +416,7 @@ html, body {
     .live-datetime {
         font-size: 0.82rem;
     }
-    
+
     /* Adjust video container padding for mobile */
     #video-container {
         padding-top: 50px;
