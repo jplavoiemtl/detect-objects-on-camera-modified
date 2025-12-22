@@ -8,6 +8,7 @@ const DEFAULT_CONFIDENCE = 0.6;
 // Navigation elements
 const btnLive = document.getElementById('btnLive');
 const btnLatest = document.getElementById('btnLatest');
+const btnOldest = document.getElementById('btnOldest');
 const btnBack = document.getElementById('btnBack');
 const btnForward = document.getElementById('btnForward');
 const positionIndicator = document.getElementById('positionIndicator');
@@ -63,6 +64,9 @@ function initNavigation() {
     if (btnLatest) {
         btnLatest.addEventListener('click', () => goToLatest());
     }
+    if (btnOldest) {
+        btnOldest.addEventListener('click', () => goToOldest());
+    }
     if (btnBack) {
         btnBack.addEventListener('click', () => goBack());
     }
@@ -74,11 +78,11 @@ function initNavigation() {
 function setLiveMode() {
     viewMode = 'live';
     historyIndex = -1;
-    
+
     // Show iframe, hide saved image
     if (iframeWrapper) iframeWrapper.style.display = 'block';
     if (savedImageWrapper) savedImageWrapper.style.display = 'none';
-    
+
     // Update UI
     updatePositionIndicator();
     updateButtonStates();
@@ -87,16 +91,25 @@ function setLiveMode() {
 
 function goToLatest() {
     if (detectionHistory.length === 0) return;
-    
+
     viewMode = 'history';
     historyIndex = detectionHistory.length - 1;
-    
+
+    showHistoryImage();
+}
+
+function goToOldest() {
+    if (detectionHistory.length === 0) return;
+
+    viewMode = 'history';
+    historyIndex = 0;
+
     showHistoryImage();
 }
 
 function goBack() {
     if (detectionHistory.length === 0) return;
-    
+
     if (viewMode === 'live') {
         // Switch to history mode at latest
         viewMode = 'history';
@@ -104,13 +117,13 @@ function goBack() {
     } else if (historyIndex > 0) {
         historyIndex--;
     }
-    
+
     showHistoryImage();
 }
 
 function goForward() {
     if (viewMode !== 'history' || detectionHistory.length === 0) return;
-    
+
     if (historyIndex < detectionHistory.length - 1) {
         historyIndex++;
         showHistoryImage();
@@ -119,18 +132,18 @@ function goForward() {
 
 function showHistoryImage() {
     if (historyIndex < 0 || historyIndex >= detectionHistory.length) return;
-    
+
     const entry = detectionHistory[historyIndex];
-    
+
     // Hide iframe, show saved image
     if (iframeWrapper) iframeWrapper.style.display = 'none';
     if (savedImageWrapper) savedImageWrapper.style.display = 'block';
-    
+
     // Load the image (served from assets/images/)
     if (savedImage && entry.filename) {
         savedImage.src = `/images/${entry.filename}`;
     }
-    
+
     // Update detection info
     showDetectionInfo(entry);
     updatePositionIndicator();
@@ -139,7 +152,7 @@ function showHistoryImage() {
 
 function showDetectionInfo(entry) {
     if (!detectionInfo) return;
-    
+
     detectionInfo.style.display = 'flex';
     if (infoLabel) infoLabel.textContent = entry.label || '-';
     if (infoConfidence) infoConfidence.textContent = entry.confidence ? `${(entry.confidence * 100).toFixed(1)}%` : '-';
@@ -154,7 +167,7 @@ function hideDetectionInfo() {
 
 function updatePositionIndicator() {
     if (!positionIndicator) return;
-    
+
     if (viewMode === 'live') {
         positionIndicator.textContent = 'Live';
     } else {
@@ -167,17 +180,22 @@ function updateButtonStates() {
     if (btnLive) {
         btnLive.classList.toggle('active', viewMode === 'live');
     }
-    
-    // Latest button
+
+    // Latest button - disabled if no history or already at latest
     if (btnLatest) {
-        btnLatest.disabled = detectionHistory.length === 0;
+        btnLatest.disabled = detectionHistory.length === 0 || (viewMode === 'history' && historyIndex >= detectionHistory.length - 1);
     }
-    
+
+    // Oldest button - disabled if no history or already at oldest
+    if (btnOldest) {
+        btnOldest.disabled = detectionHistory.length === 0 || (viewMode === 'history' && historyIndex <= 0);
+    }
+
     // Back button - disabled if at oldest or no history
     if (btnBack) {
         btnBack.disabled = detectionHistory.length === 0 || (viewMode === 'history' && historyIndex <= 0);
     }
-    
+
     // Forward button - disabled if in live mode or at newest
     if (btnForward) {
         btnForward.disabled = viewMode === 'live' || detectionHistory.length === 0 || historyIndex >= detectionHistory.length - 1;
@@ -237,7 +255,7 @@ function initSocketIO() {
 
         console.log('[DEBUG] Emitting request_labels');
         socket.emit('request_labels', null);
-        
+
         // Request detection history
         console.log('[DEBUG] Emitting request_history');
         socket.emit('request_history', null);
@@ -261,10 +279,10 @@ function initSocketIO() {
     // Label dropdown updates
     socket.on('labels', updateLabelDropdown);
     socket.on('threshold', handleThreshold);
-    
+
     // History list from backend
     socket.on('history_list', handleHistoryList);
-    
+
     // New detection saved
     socket.on('detection_saved', handleDetectionSaved);
 }
@@ -280,14 +298,14 @@ function handleThreshold(payload) {
 
 function handleHistoryList(payload) {
     console.log('[DEBUG] history_list received:', payload);
-    
+
     // Support wrapped payload
     const data = payload?.history ? payload : (payload?.message ? payload.message : {});
-    
+
     if (Array.isArray(data?.history)) {
         detectionHistory = data.history;
     }
-    
+
     updateButtonStates();
     updatePositionIndicator();
     console.log(`[DEBUG] Loaded ${detectionHistory.length} history entries`);
@@ -295,16 +313,16 @@ function handleHistoryList(payload) {
 
 function handleDetectionSaved(payload) {
     console.log('[DEBUG] detection_saved received:', payload);
-    
+
     // Support wrapped payload
     const data = payload?.entry ? payload : (payload?.message ? payload.message : {});
-    
+
     if (data?.entry) {
         detectionHistory.push(data.entry);
-        
+
         // Determine if the user was viewing the latest item *before* any rotation
         const wasViewingLatest = viewMode === 'history' && historyIndex === detectionHistory.length - 2;
-        
+
         // Enforce max limit on client side too (in case backend rotated)
         let removedCount = 0;
         while (detectionHistory.length > 40) {
