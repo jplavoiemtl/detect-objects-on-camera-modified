@@ -1,4 +1,5 @@
-If:
-  PathMatch: .*\.ino
+CompileFlags:
+  Add: [-xc++, -std=c++17]
+  CompilationDatabase: "."
 Diagnostics:
-  Suppress: ['*']
+  Suppress: ['*', 'pp_file_not_found']
