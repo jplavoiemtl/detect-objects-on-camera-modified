@@ -57,6 +57,8 @@ _last_connect_attempt = 0.0
 _reconnect_interval = 5.0
 _reconnector_started = False
 _stale_watchdog_started = False
+_current_stream_url = None
+_connect_lock = threading.Lock()
 
 # Staleness handling
 STALE_FRAME_MAX_AGE = 10.0  # seconds (increased from 5.0 for stability)
@@ -199,82 +201,93 @@ def _get_local_ip():
 
 def _connect_socketio():
     """Connect to the video stream via Socket.IO."""
-    global _sio_client, _sio_connected
+    global _sio_client, _sio_connected, _current_stream_url
 
     if _sio_connected:
         return True
 
-    if _sio_client is None and not _setup_socketio():
-        return False
+    # Use a lock to prevent race conditions between background thread and main capture calls
+    with _connect_lock:
+        # Double-check connection state after acquiring lock
+        if _sio_connected:
+            return True
 
-    # Attempt a range of possible hostnames and IPs
-    sio_urls = [
-        f"http://{VIDEO_WS_HOST}:{VIDEO_STREAM_PORT}",
-        f"http://127.0.0.1:{VIDEO_STREAM_PORT}",
-        f"http://localhost:{VIDEO_STREAM_PORT}",
-    ]
+        if _sio_client is None and not _setup_socketio():
+            return False
 
-    local_ip = _get_local_ip()
-    if local_ip:
-        sio_urls.append(f"http://{local_ip}:{VIDEO_STREAM_PORT}")
-    
-    sio_urls.extend([
-        f"http://172.17.0.1:{VIDEO_STREAM_PORT}",
-        f"http://host.docker.internal:{VIDEO_STREAM_PORT}",
-        f"http://unoq.local:{VIDEO_STREAM_PORT}",
-    ])
+        # Attempt a range of possible hostnames and IPs
+        sio_urls = [
+            f"http://{VIDEO_WS_HOST}:{VIDEO_STREAM_PORT}",
+            f"http://127.0.0.1:{VIDEO_STREAM_PORT}",
+            f"http://localhost:{VIDEO_STREAM_PORT}",
+        ]
 
-    # Remove duplicates while preserving order
-    sio_urls = list(dict.fromkeys(sio_urls))
+        local_ip = _get_local_ip()
+        if local_ip:
+            sio_urls.append(f"http://{local_ip}:{VIDEO_STREAM_PORT}")
+        
+        sio_urls.extend([
+            f"http://172.17.0.1:{VIDEO_STREAM_PORT}",
+            f"http://host.docker.internal:{VIDEO_STREAM_PORT}",
+            f"http://unoq.local:{VIDEO_STREAM_PORT}",
+        ])
 
-    for url in sio_urls:
-        try:
-            # Suppress "Trying Socket.IO" message to reduce noise
-            # Try connecting with increased timeout for stability
-            # Note: Allowing automatic transport selection (websocket or polling)
-            # Suppress websocket-client warning during connection
-            with _SuppressOutput():
-                _sio_client.connect(
-                    url, 
-                    wait_timeout=20
-                )
-                time.sleep(1.0) # Give it a moment to stabilize
+        # Remove duplicates while preserving order
+        sio_urls = list(dict.fromkeys(sio_urls))
 
-            if _sio_connected:
-                # Only print on first successful connection to reduce noise
-                return True
-        except Exception as e:
-            # Handle the "Already connected" case which can happen if state gets out of sync
-            if "Already connected" in str(e):
-                if _sio_client.connected:
-                    _sio_connected = True
-                    print(f"[CAPTURE] ✓ Socket.IO already connected to {url}")
+        for url in sio_urls:
+            try:
+                # Suppress "Trying Socket.IO" message to reduce noise
+                # Try connecting with increased timeout for stability
+                # Note: Allowing automatic transport selection (websocket or polling)
+                # Suppress websocket-client warning during connection
+                with _SuppressOutput():
+                    _sio_client.connect(
+                        url, 
+                        wait_timeout=20
+                    )
+                    time.sleep(1.0) # Give it a moment to stabilize
+
+                if _sio_connected:
+                    # Only print on first successful connection to reduce noise
+                    _current_stream_url = url
                     return True
-                else:
-                    # If it says already connected but .connected is False, force a disconnect
+            except Exception as e:
+                # Handle the "Already connected" case which can happen if state gets out of sync
+                # catch both string match and the specific ValueError from python-socketio
+                err_str = str(e)
+                if "Already connected" in err_str or "disconnected state" in err_str:
+                    if _sio_client.connected:
+                        _sio_connected = True
+                        _current_stream_url = url
+                        print(f"[CAPTURE] ✓ Socket.IO already connected to {url}")
+                        return True
+                    else:
+                        # If it says already connected but .connected is False, force a disconnect
+                        try:
+                            _sio_client.disconnect()
+                        except Exception:
+                            pass
+
+                print(f"[CAPTURE] Socket.IO connection failed for {url}: {type(e).__name__}: {e}")
+                # Try a direct HTTP frame capture as a fallback if Socket.IO fails
+                frame = _try_http_capture(url)
+                if frame is not None:
+                    global _latest_frame, _latest_frame_time
+                    _latest_frame = frame
+                    _latest_frame_time = time.time()
+                    _sio_connected = True # Mock connection to stop retries
+                    _current_stream_url = url
+                    print(f"[CAPTURE] ✓ HTTP capture fallback succeeded for {url}")
+                    return True
+            finally:
+                if not _sio_connected:
                     try:
                         _sio_client.disconnect()
                     except Exception:
                         pass
 
-            print(f"[CAPTURE] Socket.IO connection failed for {url}: {type(e).__name__}: {e}")
-            # Try a direct HTTP frame capture as a fallback if Socket.IO fails
-            frame = _try_http_capture(url)
-            if frame is not None:
-                global _latest_frame, _latest_frame_time
-                _latest_frame = frame
-                _latest_frame_time = time.time()
-                _sio_connected = True # Mock connection to stop retries
-                print(f"[CAPTURE] ✓ HTTP capture fallback succeeded for {url}")
-                return True
-        finally:
-            if not _sio_connected:
-                try:
-                    _sio_client.disconnect()
-                except Exception:
-                    pass
-
-    return False
+        return False
 
 
 def _try_http_capture(base_url: str) -> Optional[np.ndarray]:
@@ -298,7 +311,7 @@ def _try_http_capture(base_url: str) -> Optional[np.ndarray]:
 
 def capture_frame():
     """Capture a single frame from the video stream via Socket.IO."""
-    global _sio_initialized, _latest_frame, _last_connect_attempt, _sio_connected, _sio_client
+    global _sio_initialized, _latest_frame, _last_connect_attempt, _sio_connected, _sio_client, _latest_frame_time
 
     now = time.time()
 
@@ -312,7 +325,24 @@ def capture_frame():
         # Suppress connection messages to reduce terminal noise
         _connect_socketio()
 
-    # Return latest frame if available and fresh
+    # If the frame is reasonably fresh (e.g. from working socketio), use it
+    if _latest_frame is not None:
+        age = _frame_age(now)
+        if age < 1.0:
+            return _latest_frame.copy()
+            
+    # If frame is starting to get stale (or we have no fresh frame), try HTTP fallback
+    # This helps when Socket.IO is connected but stalled (common with polling transport)
+    if _current_stream_url:
+        fallback_frame = _try_http_capture(_current_stream_url)
+        if fallback_frame is not None:
+            _latest_frame = fallback_frame
+            _latest_frame_time = time.time()
+            # Mock connection state to prevent aggressive reconnects if HTTP is working
+            _sio_connected = True 
+            return fallback_frame
+
+    # Use stale frame if within acceptable limits
     if _latest_frame is not None:
         age = _frame_age(now)
         if age <= STALE_FRAME_MAX_AGE:
@@ -320,6 +350,7 @@ def capture_frame():
         else:
             # Stale frame, treat as unavailable to force retry
             print(f"[CAPTURE] Stale frame age={age:.1f}s; ignoring")
+
 
             # If the frame is EXTREMELY stale (e.g. > 10s), force a disconnect
             if age > 10.0 and _sio_connected:
