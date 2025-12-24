@@ -34,11 +34,11 @@ _reconnector_started = False
 _stale_watchdog_started = False
 
 # Staleness handling
-STALE_FRAME_MAX_AGE = 5.0  # seconds
+STALE_FRAME_MAX_AGE = 10.0  # seconds (increased from 5.0 for stability)
 FRESH_RETRY_TOTAL = 0.75   # seconds
 FRESH_RETRY_SLEEP = 0.05   # seconds
 # If no fresh frame arrives for this long while "connected", force reconnect
-STALE_RECONNECT_AGE = 15.0  # seconds
+STALE_RECONNECT_AGE = 30.0  # seconds (increased from 15.0 for stability)
 STALE_CHECK_INTERVAL = 5.0  # seconds
 
 
@@ -51,7 +51,16 @@ def _setup_socketio():
         import engineio  # type: ignore
 
         # Set logger=False and engineio_logger=False to keep the terminal clean
-        _sio_client = socketio.Client(logger=False, engineio_logger=False)
+        # Configure for stable polling transport with appropriate timeouts
+        _sio_client = socketio.Client(
+            logger=False, 
+            engineio_logger=False,
+            reconnection=True,
+            reconnection_attempts=0,  # Infinite retries
+            reconnection_delay=1,
+            reconnection_delay_max=5,
+            randomization_factor=0.5
+        )
 
         @_sio_client.event
         def connect():
@@ -61,10 +70,10 @@ def _setup_socketio():
 
         @_sio_client.event
         def disconnect():
-            global _sio_connected, _latest_frame, _latest_frame_time
+            global _sio_connected
             _sio_connected = False
-            _latest_frame = None
-            _latest_frame_time = 0.0
+            # Don't immediately clear frames on disconnect - polling transport disconnects frequently
+            # Frames will be cleared by staleness check if they're actually old
             print("[CAPTURE] Socket.IO disconnected")
 
         @_sio_client.on("*")
@@ -179,10 +188,11 @@ def _connect_socketio():
     for url in sio_urls:
         try:
             print(f"[CAPTURE] Trying Socket.IO: {url}")
-            # Try connecting with a slightly longer timeout
+            # Try connecting with increased timeout for stability
+            # Note: Allowing automatic transport selection (websocket or polling)
             _sio_client.connect(
                 url, 
-                wait_timeout=10
+                wait_timeout=20
             )
             time.sleep(1.0) # Give it a moment to stabilize
 
