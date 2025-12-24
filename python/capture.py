@@ -306,8 +306,7 @@ def _try_http_capture(base_url: str) -> Optional[np.ndarray]:
             except Exception as e:
                 # Only print if it's not just a 404
                 if "404" not in str(e):
-                    # print(f"[CAPTURE] HTTP capture failed for {path}: {e}")
-                    pass
+                    print(f"[CAPTURE] HTTP capture failed for {path}: {e}")
                 continue
     except Exception as e:
         print(f"[CAPTURE] HTTP capture unexpected error: {e}")
@@ -347,6 +346,8 @@ def capture_frame():
             # Mock connection state to prevent aggressive reconnects if HTTP is working
             _sio_connected = True 
             return fallback_frame
+    else:
+        print("[CAPTURE] No stream URL available for fallback")
 
     # Use stale frame if within acceptable limits
     if _latest_frame is not None:
