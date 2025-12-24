@@ -2,13 +2,38 @@ import base64
 import math
 import os
 import socket
+import sys
 import threading
 import time
+import warnings
 from datetime import datetime
 from typing import List, Optional, Tuple
 
 import cv2  # type: ignore
 import numpy as np  # type: ignore
+
+# Suppress the "websocket-client package not installed" warning from socketio
+warnings.filterwarnings('ignore', message='.*websocket-client.*')
+
+# Create a custom stderr filter to suppress websocket-client warnings
+class _StderrFilter:
+    """Filter stderr to suppress websocket-client warnings."""
+    def __init__(self, original_stderr):
+        self.original_stderr = original_stderr
+    
+    def write(self, message):
+        # Only write if it doesn't contain the websocket-client warning
+        if 'websocket-client' not in message.lower():
+            self.original_stderr.write(message)
+    
+    def flush(self):
+        self.original_stderr.flush()
+    
+    def fileno(self):
+        return self.original_stderr.fileno()
+
+# Install the stderr filter globally for this module
+sys.stderr = _StderrFilter(sys.stderr)
 
 from persistence import (
     IMAGES_DIR,
@@ -74,7 +99,7 @@ def _setup_socketio():
             _sio_connected = False
             # Don't immediately clear frames on disconnect - polling transport disconnects frequently
             # Frames will be cleared by staleness check if they're actually old
-            print("[CAPTURE] Socket.IO disconnected")
+            # Suppress disconnect messages to reduce terminal noise (polling disconnects frequently)
 
         @_sio_client.on("*")
         def catch_all(event, *args):
@@ -142,6 +167,23 @@ def _frame_age(now: float) -> float:
     return now - _latest_frame_time
 
 
+class _SuppressOutput:
+    """Context manager to suppress stdout and stderr."""
+    def __enter__(self):
+        import sys
+        from io import StringIO
+        self._stdout = sys.stdout
+        self._stderr = sys.stderr
+        sys.stdout = StringIO()
+        sys.stderr = StringIO()
+        return self
+    
+    def __exit__(self, *args):
+        import sys
+        sys.stdout = self._stdout
+        sys.stderr = self._stderr
+
+
 def _get_local_ip():
     """Get the local IP address of this device."""
     try:
@@ -187,17 +229,19 @@ def _connect_socketio():
 
     for url in sio_urls:
         try:
-            print(f"[CAPTURE] Trying Socket.IO: {url}")
+            # Suppress "Trying Socket.IO" message to reduce noise
             # Try connecting with increased timeout for stability
             # Note: Allowing automatic transport selection (websocket or polling)
-            _sio_client.connect(
-                url, 
-                wait_timeout=20
-            )
-            time.sleep(1.0) # Give it a moment to stabilize
+            # Suppress websocket-client warning during connection
+            with _SuppressOutput():
+                _sio_client.connect(
+                    url, 
+                    wait_timeout=20
+                )
+                time.sleep(1.0) # Give it a moment to stabilize
 
             if _sio_connected:
-                print(f"[CAPTURE] ✓ Connected successfully to {url}")
+                # Only print on first successful connection to reduce noise
                 return True
         except Exception as e:
             # Handle the "Already connected" case which can happen if state gets out of sync
@@ -265,11 +309,8 @@ def capture_frame():
     if should_attempt:
         _sio_initialized = True
         _last_connect_attempt = now
-        print("[CAPTURE] Connecting to video stream via Socket.IO...")
-        if _connect_socketio():
-            print("[CAPTURE] Socket.IO connection established!")
-        else:
-            print("[CAPTURE] Socket.IO connection failed")
+        # Suppress connection messages to reduce terminal noise
+        _connect_socketio()
 
     # Return latest frame if available and fresh
     if _latest_frame is not None:
@@ -301,11 +342,11 @@ def _reconnect_loop():
         if not _sio_connected and (now - _last_connect_attempt) >= _reconnect_interval:
             _sio_initialized = True
             _last_connect_attempt = now
-            print("[CAPTURE] Background reconnect attempt to video stream...")
+            # Suppress reconnection messages to reduce terminal noise
             if _connect_socketio():
-                print("[CAPTURE] Socket.IO reconnection succeeded")
+                pass  # Connection succeeded silently
             else:
-                print("[CAPTURE] Socket.IO reconnection failed")
+                pass  # Connection failed silently
         time.sleep(1.0)
 
 
