@@ -297,15 +297,21 @@ def _try_http_capture(base_url: str) -> Optional[np.ndarray]:
         # Common endpoints for frame capture in these Bricks
         for path in ["/frame", "/snapshot", "/latest"]:
             try:
-                resp = requests.get(f"{base_url}{path}", timeout=1.0)
+                # Increased timeout to 2.0s
+                resp = requests.get(f"{base_url}{path}", timeout=2.0)
                 if resp.status_code == 200 and resp.headers.get("Content-Type", "").startswith("image/"):
                     frame = cv2.imdecode(np.frombuffer(resp.content, np.uint8), cv2.IMREAD_COLOR)
                     if frame is not None:
                         return frame
-            except Exception:
+            except Exception as e:
+                # Only print if it's not just a 404
+                if "404" not in str(e):
+                    # print(f"[CAPTURE] HTTP capture failed for {path}: {e}")
+                    pass
                 continue
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[CAPTURE] HTTP capture unexpected error: {e}")
+        return None
     return None
 
 
@@ -388,6 +394,13 @@ def _stale_watchdog_loop():
         time.sleep(STALE_CHECK_INTERVAL)
         now = time.time()
         age = _frame_age(now)
+        
+        # Don't kill connection if we JUST connected (within STALE_RECONNECT_AGE)
+        # This gives time for the first frame to arrive (or HTTP fallback to work)
+        connection_age = now - _last_connect_attempt
+        if connection_age < STALE_RECONNECT_AGE:
+             continue
+
         # If we think we are connected but the client says otherwise, or if frames are too old
         needs_reconnect = (_sio_connected and age > STALE_RECONNECT_AGE) or \
                           (_sio_connected and _sio_client is not None and not _sio_client.connected)
