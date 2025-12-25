@@ -303,6 +303,10 @@ def _try_http_capture(base_url: str) -> Optional[np.ndarray]:
                     frame = cv2.imdecode(np.frombuffer(resp.content, np.uint8), cv2.IMREAD_COLOR)
                     if frame is not None:
                         return frame
+                    else:
+                        print(f"[CAPTURE] Failed to decode image from {path}")
+                else:
+                    print(f"[CAPTURE] HTTP capture rejected {path}: Status={resp.status_code}, Type={resp.headers.get('Content-Type')}")
             except Exception as e:
                 # Only print if it's not just a 404
                 if "404" not in str(e):
