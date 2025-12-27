@@ -106,13 +106,16 @@ def _setup_socketio():
         @_sio_client.on("*")
         def catch_all(event, *args):
             """Catch all events to find frame data."""
-            if _latest_frame is None:
-                # Log only the first few events to avoid flooding, until we get a frame
-                pass
+            global _latest_frame
+            had_frame = _latest_frame is not None
             
             # Process all arguments passed with the event
             for arg in args:
                 _process_frame_data(arg)
+            
+            # Log first frame received (helpful for debugging)
+            if not had_frame and _latest_frame is not None:
+                print(f"[CAPTURE] ✓ First frame received via event: {event}")
 
         return True
     except ImportError:
@@ -216,8 +219,10 @@ def _connect_socketio():
             return False
 
         # Attempt a range of possible hostnames and IPs
+        # Priority: environment variable, then known working IP, then fallbacks
         sio_urls = [
             f"http://{VIDEO_WS_HOST}:{VIDEO_STREAM_PORT}",
+            f"http://192.168.30.223:{VIDEO_STREAM_PORT}",  # Known video runner IP
             f"http://127.0.0.1:{VIDEO_STREAM_PORT}",
             f"http://localhost:{VIDEO_STREAM_PORT}",
         ]
