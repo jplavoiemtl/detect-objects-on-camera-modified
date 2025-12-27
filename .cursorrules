@@ -1,0 +1,4 @@
+# AI Agent Rules
+
+1. **Artifact Archival**: Whenever you modify or create `task.md`, `implementation_plan.md`, or `walkthrough.md` in the internal brain directory, you MUST copy them to the `project_plans/` directory in the project root.
+2. **Persistence**: Ensure the `project_plans/` directory remains the source of truth for the project's history and planning documents.
