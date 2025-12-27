@@ -78,14 +78,12 @@ def _setup_socketio():
 
         # Set logger=False and engineio_logger=False to keep the terminal clean
         # Configure for stable polling transport with appropriate timeouts
+        # Disable auto-reconnection so we can manage the lifecycle manually ("nuclear option")
         _sio_client = socketio.Client(
             logger=False, 
             engineio_logger=False,
-            reconnection=True,
-            reconnection_attempts=0,  # Infinite retries
-            reconnection_delay=1,
-            reconnection_delay_max=5,
-            randomization_factor=0.5
+            reconnection=False,  # We handle reconnection manually
+            request_timeout=10   # Shorter timeout
         )
 
         @_sio_client.event
@@ -103,6 +101,7 @@ def _setup_socketio():
         @_sio_client.event
         def disconnect():
             global _sio_connected
+            print("[CAPTURE] ! Socket.IO disconnect event received")
             _sio_connected = False
             # Don't immediately clear frames on disconnect - polling transport disconnects frequently
             # Frames will be cleared by staleness check if they're actually old
@@ -177,21 +176,7 @@ def _frame_age(now: float) -> float:
     return now - _latest_frame_time
 
 
-class _SuppressOutput:
-    """Context manager to suppress stdout and stderr."""
-    def __enter__(self):
-        import sys
-        from io import StringIO
-        self._stdout = sys.stdout
-        self._stderr = sys.stderr
-        sys.stdout = StringIO()
-        sys.stderr = StringIO()
-        return self
-    
-    def __exit__(self, *args):
-        import sys
-        sys.stdout = self._stdout
-        sys.stderr = self._stderr
+
 
 
 def _get_local_ip():
@@ -251,35 +236,39 @@ def _connect_socketio():
                 # Try connecting with increased timeout for stability
                 # Note: Allowing automatic transport selection (websocket or polling)
                 # Suppress websocket-client warning during connection
-                with _SuppressOutput():
-                    _sio_client.connect(
-                        url, 
-                        wait_timeout=20
-                    )
-                    time.sleep(1.0) # Give it a moment to stabilize
+                
+                _sio_client.connect(
+                    url, 
+                    wait_timeout=20
+                )
+                time.sleep(1.0) # Give it a moment to stabilize
 
                 if _sio_connected:
                     # Only print on first successful connection to reduce noise
+                    print(f"[CAPTURE] ✓ Socket.IO connected to {url} (fresh connection)")
                     return True
             except Exception as e:
                 # Handle the "Already connected" case which can happen if state gets out of sync
                 # catch both string match and the specific ValueError from python-socketio
                 err_str = str(e)
                 if "Already connected" in err_str or "disconnected state" in err_str:
-                    if _sio_client.connected:
-                        _sio_connected = True
-                        print(f"[CAPTURE] ✓ Socket.IO already connected to {url}")
-                        return True
-                    else:
-                        # If it says already connected but .connected is False, force a disconnect
-                        try:
-                            _sio_client.disconnect()
-                        except Exception:
-                            pass
+                    print(f"[CAPTURE] ! Socket.IO reported '{err_str}' for {url}. State mismatched.")
+                    print(f"[CAPTURE] ! Destroying client instance to force fresh start.")
+                    try:
+                        _sio_client.disconnect()
+                    except Exception:
+                        pass
+                    _sio_client = None
+                    _sio_connected = False
+                    return False
+                
+                # Only log real connection failures if we are debugging or every few attempts 
+                # to avoid spam, but the user requested logs for this investigation.
+                # using a slightly different format to distinguish from the zombie case
+                print(f"[CAPTURE] Connection failed to {url}: {e} (Client ID: {id(_sio_client)})")
 
-                print(f"[CAPTURE] Socket.IO connection failed for {url}: {type(e).__name__}: {e}")
             finally:
-                if not _sio_connected:
+                if not _sio_connected and _sio_client is not None:
                     try:
                         _sio_client.disconnect()
                     except Exception:
@@ -356,7 +345,7 @@ def _reconnect_loop():
 
 def _stale_watchdog_loop():
     """Force reconnect if we appear connected but no fresh frames arrive for too long."""
-    global _latest_frame, _latest_frame_time, _last_connect_attempt, _sio_connected
+    global _latest_frame, _latest_frame_time, _last_connect_attempt, _sio_connected, _sio_client
     while True:
         time.sleep(STALE_CHECK_INTERVAL)
         now = time.time()
@@ -369,17 +358,29 @@ def _stale_watchdog_loop():
              continue
 
         # If we think we are connected but the client says otherwise, or if frames are too old
+        client_connected_status = False
+        if _sio_client is not None:
+            try:
+                client_connected_status = _sio_client.connected
+            except:
+                pass
+
         needs_reconnect = (_sio_connected and age > STALE_RECONNECT_AGE) or \
-                          (_sio_connected and _sio_client is not None and not _sio_client.connected)
+                          (_sio_connected and _sio_client is not None and not client_connected_status)
         
         if needs_reconnect:
-            print(f"[CAPTURE] Stale connection or frame detected (age={age:.1f}s); forcing reconnect")
+            print(f"[CAPTURE] WATCHDOG: Stale state detected (Frame Age={age:.1f}s, Connected={_sio_connected}, ClientConnected={client_connected_status})")
+            print(f"[CAPTURE] WATCHDOG: Forcing aggressive reconnect and destroying client instance.")
+            
             try:
                 _sio_connected = False
                 if _sio_client is not None:
                     _sio_client.disconnect()
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"[CAPTURE] WATCHDOG: Error during disconnect: {e}")
+            
+            # AGGRESSIVE FIX: Destroy the old client to ensure a fresh clean state
+            _sio_client = None
             _latest_frame = None
             _latest_frame_time = 0.0
             # Trigger immediate reconnect attempt
