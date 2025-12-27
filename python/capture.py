@@ -57,7 +57,6 @@ _last_connect_attempt = 0.0
 _reconnect_interval = 5.0
 _reconnector_started = False
 _stale_watchdog_started = False
-_current_stream_url = None
 _connect_lock = threading.Lock()
 
 # Staleness handling
@@ -94,6 +93,12 @@ def _setup_socketio():
             global _sio_connected
             _sio_connected = True
             print("[CAPTURE] ✓ Socket.IO connected to video stream")
+            # Try to wake up the stream if it's passive
+            try:
+                _sio_client.emit('start')
+                _sio_client.emit('start-stream')
+            except Exception:
+                pass
 
         @_sio_client.event
         def disconnect():
@@ -204,7 +209,7 @@ def _get_local_ip():
 
 def _connect_socketio():
     """Connect to the video stream via Socket.IO."""
-    global _sio_client, _sio_connected, _current_stream_url
+    global _sio_client, _sio_connected
 
     if _sio_connected:
         return True
@@ -255,7 +260,6 @@ def _connect_socketio():
 
                 if _sio_connected:
                     # Only print on first successful connection to reduce noise
-                    _current_stream_url = url
                     return True
             except Exception as e:
                 # Handle the "Already connected" case which can happen if state gets out of sync
@@ -264,7 +268,6 @@ def _connect_socketio():
                 if "Already connected" in err_str or "disconnected state" in err_str:
                     if _sio_client.connected:
                         _sio_connected = True
-                        _current_stream_url = url
                         print(f"[CAPTURE] ✓ Socket.IO already connected to {url}")
                         return True
                     else:
@@ -275,16 +278,6 @@ def _connect_socketio():
                             pass
 
                 print(f"[CAPTURE] Socket.IO connection failed for {url}: {type(e).__name__}: {e}")
-                # Try a direct HTTP frame capture as a fallback if Socket.IO fails
-                frame = _try_http_capture(url)
-                if frame is not None:
-                    global _latest_frame, _latest_frame_time
-                    _latest_frame = frame
-                    _latest_frame_time = time.time()
-                    _sio_connected = True # Mock connection to stop retries
-                    _current_stream_url = url
-                    print(f"[CAPTURE] ✓ HTTP capture fallback succeeded for {url}")
-                    return True
             finally:
                 if not _sio_connected:
                     try:
@@ -295,23 +288,7 @@ def _connect_socketio():
         return False
 
 
-def _try_http_capture(base_url: str) -> Optional[np.ndarray]:
-    """Attempt to capture a single frame via common HTTP endpoints."""
-    try:
-        import requests
-        # Common endpoints for frame capture in these Bricks
-        for path in ["/frame", "/snapshot", "/latest"]:
-            try:
-                resp = requests.get(f"{base_url}{path}", timeout=1.0)
-                if resp.status_code == 200 and resp.headers.get("Content-Type", "").startswith("image/"):
-                    frame = cv2.imdecode(np.frombuffer(resp.content, np.uint8), cv2.IMREAD_COLOR)
-                    if frame is not None:
-                        return frame
-            except Exception:
-                continue
-    except Exception:
-        pass
-    return None
+
 
 
 def capture_frame():
@@ -336,18 +313,7 @@ def capture_frame():
         if age < 1.0:
             return _latest_frame.copy()
             
-    # If frame is starting to get stale (or we have no fresh frame), try HTTP fallback
-    # This helps when Socket.IO is connected but stalled (common with polling transport)
-    if _current_stream_url:
-        fallback_frame = _try_http_capture(_current_stream_url)
-        if fallback_frame is not None:
-            _latest_frame = fallback_frame
-            _latest_frame_time = time.time()
-            # Mock connection state to prevent aggressive reconnects if HTTP is working
-            _sio_connected = True 
-            return fallback_frame
-    else:
-        print("[CAPTURE] No stream URL available for fallback")
+
 
     # Use stale frame if within acceptable limits
     if _latest_frame is not None:
