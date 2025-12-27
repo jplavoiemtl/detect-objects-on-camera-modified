@@ -297,24 +297,15 @@ def _try_http_capture(base_url: str) -> Optional[np.ndarray]:
         # Common endpoints for frame capture in these Bricks
         for path in ["/frame", "/snapshot", "/latest"]:
             try:
-                # Increased timeout to 2.0s
-                resp = requests.get(f"{base_url}{path}", timeout=2.0)
+                resp = requests.get(f"{base_url}{path}", timeout=1.0)
                 if resp.status_code == 200 and resp.headers.get("Content-Type", "").startswith("image/"):
                     frame = cv2.imdecode(np.frombuffer(resp.content, np.uint8), cv2.IMREAD_COLOR)
                     if frame is not None:
                         return frame
-                    else:
-                        print(f"[CAPTURE] Failed to decode image from {path}")
-                else:
-                    print(f"[CAPTURE] HTTP capture rejected {path}: Status={resp.status_code}, Type={resp.headers.get('Content-Type')}")
-            except Exception as e:
-                # Only print if it's not just a 404
-                if "404" not in str(e):
-                    print(f"[CAPTURE] HTTP capture failed for {path}: {e}")
+            except Exception:
                 continue
-    except Exception as e:
-        print(f"[CAPTURE] HTTP capture unexpected error: {e}")
-        return None
+    except Exception:
+        pass
     return None
 
 
