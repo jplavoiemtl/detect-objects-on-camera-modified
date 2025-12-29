@@ -176,9 +176,6 @@ def _frame_age(now: float) -> float:
     return now - _latest_frame_time
 
 
-
-
-
 def _get_local_ip():
     """Get the local IP address of this device."""
     try:
@@ -275,9 +272,6 @@ def _connect_socketio():
                         pass
 
         return False
-
-
-
 
 
 def capture_frame():
@@ -548,4 +542,3 @@ def capture_and_save_detection(
     print(f"✅ Detection saved: {filename} ({label}, {confidence:.2f})")
 
     return entry, next_detection_id
-
