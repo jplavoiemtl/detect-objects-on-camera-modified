@@ -271,6 +271,11 @@ def _connect_socketio():
                     except Exception:
                         pass
 
+        # If we get here, all connection attempts failed.
+        # Destroy the client instance to ensure we start fresh on the next attempt.
+        # This fixes issues where the client gets into a zombie state (e.g. after ConnectionResetError).
+        _sio_client = None
+        _sio_connected = False
         return False
 
 
