@@ -176,14 +176,21 @@ def _frame_age(now: float) -> float:
     return now - _latest_frame_time
 
 
+_local_ip_cache = None
+
 def _get_local_ip():
-    """Get the local IP address of this device."""
+    """Get the local IP address of this device (cached)."""
+    global _local_ip_cache
+    if _local_ip_cache:
+        return _local_ip_cache
+
     try:
         # This doesn't actually connect, just gets the local interface IP used for routing
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("8.8.8.8", 80))
         ip = s.getsockname()[0]
         s.close()
+        _local_ip_cache = ip
         return ip
     except Exception:
         return None
@@ -281,19 +288,16 @@ def _connect_socketio():
 
 def capture_frame():
     """Capture a single frame from the video stream via Socket.IO."""
-    global _sio_initialized, _latest_frame, _last_connect_attempt, _sio_connected, _sio_client, _latest_frame_time
+    global _latest_frame, _sio_connected, _latest_frame_time
 
     now = time.time()
 
-    # Connect to Socket.IO on first call or retry periodically if disconnected
-    should_attempt = (not _sio_initialized) or (
-        not _sio_connected and (now - _last_connect_attempt >= _reconnect_interval)
-    )
-    if should_attempt:
-        _sio_initialized = True
-        _last_connect_attempt = now
-        # Suppress connection messages to reduce terminal noise
-        _connect_socketio()
+    # NOTE: Synchronous connection attempts here were causing massive lag.
+    # We now rely STRICTLY on the background thread (_reconnect_loop) to handle connections.
+    # This function is now non-blocking and only returns a frame if one is available.
+    
+    if not _sio_connected:
+        return None
 
     # If the frame is reasonably fresh (e.g. from working socketio), use it
     if _latest_frame is not None:
