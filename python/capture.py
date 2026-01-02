@@ -45,7 +45,13 @@ from persistence import (
 # Use environment variables if available, otherwise defaults
 VIDEO_STREAM_PORT = int(os.environ.get("VIDEO_RUNNER_PORT", 4912))
 VIDEO_WS_HOST = os.environ.get("VIDEO_RUNNER_HOST", "ei-video-obj-detection-runner")
+# Explicit IP override - use this when mDNS/hostname resolution fails
+VIDEO_RUNNER_IP = os.environ.get("VIDEO_RUNNER_IP", "")
 MODEL_INPUT_SIZE = 416  # YOLO input dimension used by the Brick
+
+# Log configuration on startup
+print(f"[CAPTURE] Config: HOST={VIDEO_WS_HOST}, PORT={VIDEO_STREAM_PORT}, IP_OVERRIDE={VIDEO_RUNNER_IP or 'none'}")
+print(f"[CAPTURE] Tip: Set VIDEO_RUNNER_IP=<ip> to force a specific IP when DNS fails")
 
 # Frame capture state
 _sio_initialized = False
@@ -58,6 +64,7 @@ _reconnect_interval = 5.0
 _reconnector_started = False
 _stale_watchdog_started = False
 _connect_lock = threading.Lock()
+_connection_attempt_count = 0  # Track attempts for log throttling
 
 # Staleness handling
 STALE_FRAME_MAX_AGE = 10.0  # seconds (increased from 5.0 for stability)
@@ -198,7 +205,7 @@ def _get_local_ip():
 
 def _connect_socketio():
     """Connect to the video stream via Socket.IO."""
-    global _sio_client, _sio_connected
+    global _sio_client, _sio_connected, _connection_attempt_count
 
     if _sio_connected:
         return True
@@ -212,19 +219,33 @@ def _connect_socketio():
         if _sio_client is None and not _setup_socketio():
             return False
 
-        # Attempt a range of possible hostnames and IPs
-        # Priority: environment variable, then known working IP, then fallbacks
-        sio_urls = [
-            f"http://{VIDEO_WS_HOST}:{VIDEO_STREAM_PORT}",
-            f"http://192.168.30.223:{VIDEO_STREAM_PORT}",  # Known video runner IP
+        _connection_attempt_count += 1
+        should_log = _connection_attempt_count <= 1 or _connection_attempt_count % 5 == 0
+
+        # Build URL list - explicit IP override takes highest priority
+        sio_urls = []
+        
+        # Priority 1: Explicit IP override (most reliable when DNS fails)
+        if VIDEO_RUNNER_IP:
+            sio_urls.append(f"http://{VIDEO_RUNNER_IP}:{VIDEO_STREAM_PORT}")
+        
+        # Priority 2: Environment variable hostname
+        sio_urls.append(f"http://{VIDEO_WS_HOST}:{VIDEO_STREAM_PORT}")
+        
+        # Priority 3: Localhost variants (for same-device deployment)
+        sio_urls.extend([
             f"http://127.0.0.1:{VIDEO_STREAM_PORT}",
             f"http://localhost:{VIDEO_STREAM_PORT}",
-        ]
-
+        ])
+        
+        # Priority 4: Known network IPs
+        sio_urls.append(f"http://192.168.30.223:{VIDEO_STREAM_PORT}")
+        
         local_ip = _get_local_ip()
         if local_ip:
             sio_urls.append(f"http://{local_ip}:{VIDEO_STREAM_PORT}")
         
+        # Priority 5: Docker and mDNS fallbacks
         sio_urls.extend([
             f"http://172.17.0.1:{VIDEO_STREAM_PORT}",
             f"http://host.docker.internal:{VIDEO_STREAM_PORT}",
@@ -234,30 +255,23 @@ def _connect_socketio():
         # Remove duplicates while preserving order
         sio_urls = list(dict.fromkeys(sio_urls))
 
+        failed_urls = []
         for url in sio_urls:
             try:
-                # Suppress "Trying Socket.IO" message to reduce noise
-                # Try connecting with increased timeout for stability
-                # Note: Allowing automatic transport selection (websocket or polling)
-                # Suppress websocket-client warning during connection
-                
                 _sio_client.connect(
                     url, 
                     wait_timeout=20
                 )
-                time.sleep(1.0) # Give it a moment to stabilize
+                time.sleep(1.0)
 
                 if _sio_connected:
-                    # Only print on first successful connection to reduce noise
-                    print(f"[CAPTURE] ✓ Socket.IO connected to {url} (fresh connection)")
+                    print(f"[CAPTURE] ✓ Connected to {url} (attempt #{_connection_attempt_count})")
+                    _connection_attempt_count = 0  # Reset on success
                     return True
             except Exception as e:
-                # Handle the "Already connected" case which can happen if state gets out of sync
-                # catch both string match and the specific ValueError from python-socketio
                 err_str = str(e)
                 if "Already connected" in err_str or "disconnected state" in err_str:
-                    print(f"[CAPTURE] ! Socket.IO reported '{err_str}' for {url}. State mismatched.")
-                    print(f"[CAPTURE] ! Destroying client instance to force fresh start.")
+                    print(f"[CAPTURE] ! Socket.IO state mismatch. Resetting client.")
                     try:
                         _sio_client.disconnect()
                     except Exception:
@@ -266,10 +280,9 @@ def _connect_socketio():
                     _sio_connected = False
                     return False
                 
-                # Only log real connection failures if we are debugging or every few attempts 
-                # to avoid spam, but the user requested logs for this investigation.
-                # using a slightly different format to distinguish from the zombie case
-                print(f"[CAPTURE] Connection failed to {url}: {e} (Client ID: {id(_sio_client)})")
+                # Collect failures for summary
+                short_err = err_str.split("(Caused by")[0].strip() if "(Caused by" in err_str else err_str[:50]
+                failed_urls.append((url, short_err))
 
             finally:
                 if not _sio_connected and _sio_client is not None:
@@ -278,9 +291,17 @@ def _connect_socketio():
                     except Exception:
                         pass
 
-        # If we get here, all connection attempts failed.
-        # Destroy the client instance to ensure we start fresh on the next attempt.
-        # This fixes issues where the client gets into a zombie state (e.g. after ConnectionResetError).
+        # Log summary (only periodically to reduce spam)
+        if should_log:
+            print(f"[CAPTURE] ⚠ Connection failed (attempt #{_connection_attempt_count}): tried {len(sio_urls)} URLs, all failed")
+            if _connection_attempt_count == 1:
+                # First failure - show details
+                for url, err in failed_urls:
+                    print(f"[CAPTURE]   - {url}: {err}")
+                print(f"[CAPTURE] 💡 Fix: Restart app with 'arduino-app-cli app stop/start user:detect-objects-on-camera-modified'")
+                print(f"[CAPTURE] 💡 Or set VIDEO_RUNNER_IP=<ip> to force a specific IP")
+
+        # Destroy client to ensure fresh start
         _sio_client = None
         _sio_connected = False
         return False
