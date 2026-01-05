@@ -397,7 +397,6 @@ def _reconnect_loop():
                 disconnect_start_time = now
             elif (now - disconnect_start_time) > WATCHDOG_MAX_OFFLINE:
                 print(f"[CAPTURE] FATAL: Video stream unavailable for >{WATCHDOG_MAX_OFFLINE}s. Initiating REBOOT...")
-                # Reboot the entire device to recover the video service
                 force_reboot(f"video-stream-unavailable-for-{WATCHDOG_MAX_OFFLINE}s")
 
             if (now - _last_connect_attempt) >= current_wait:
