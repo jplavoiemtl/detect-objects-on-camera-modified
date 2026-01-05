@@ -435,7 +435,7 @@ def _stale_watchdog_loop():
         age = _frame_age(now)
         
         # Don't kill connection if we JUST connected (within STALE_RECONNECT_AGE)
-        # This gives time for the first frame to arrive (or HTTP fallback to work)
+        # This gives time for the first frame to arrive
         connection_age = now - _last_connect_attempt
         if connection_age < STALE_RECONNECT_AGE:
              continue
