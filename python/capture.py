@@ -46,6 +46,7 @@ from persistence import (
 VIDEO_STREAM_PORT = int(os.environ.get("VIDEO_RUNNER_PORT", 4912))
 VIDEO_WS_HOST = os.environ.get("VIDEO_RUNNER_HOST", "ei-video-obj-detection-runner")
 # Explicit IP override - use this when mDNS/hostname resolution fails
+# IMPROVEMENT: Bypasses network discovery issues by allowing direct IP connection
 VIDEO_RUNNER_IP = os.environ.get("VIDEO_RUNNER_IP", "")
 MODEL_INPUT_SIZE = 416  # YOLO input dimension used by the Brick
 
@@ -226,6 +227,7 @@ def _connect_socketio():
         sio_urls = []
         
         # Priority 1: Explicit IP override (most reliable when DNS fails)
+        # IMPROVEMENT: This is checked first to ensure we don't waste time on failing updates
         if VIDEO_RUNNER_IP:
             sio_urls.append(f"http://{VIDEO_RUNNER_IP}:{VIDEO_STREAM_PORT}")
         
@@ -404,6 +406,7 @@ def _stale_watchdog_loop():
                 print(f"[CAPTURE] WATCHDOG: Error during disconnect: {e}")
             
             # AGGRESSIVE FIX: Destroy the old client to ensure a fresh clean state
+            # IMPROVEMENT: Prevents "zombie" connections where the library thinks it's connected but isn't
             _sio_client = None
             _latest_frame = None
             _latest_frame_time = 0.0
