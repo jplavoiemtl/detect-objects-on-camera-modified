@@ -41,6 +41,7 @@ from persistence import (
     delete_oldest_detection,
     save_detection_to_log,
 )
+from health_monitor import force_reboot
 
 # Use environment variables if available, otherwise defaults
 VIDEO_STREAM_PORT = int(os.environ.get("VIDEO_RUNNER_PORT", 4912))
@@ -395,9 +396,9 @@ def _reconnect_loop():
             if disconnect_start_time is None:
                 disconnect_start_time = now
             elif (now - disconnect_start_time) > WATCHDOG_MAX_OFFLINE:
-                print(f"[CAPTURE] FATAL: Video stream unavailable for >{WATCHDOG_MAX_OFFLINE}s. Initiating self-restart...")
-                # Exit with error to trigger supervisor restart
-                os._exit(1)
+                print(f"[CAPTURE] FATAL: Video stream unavailable for >{WATCHDOG_MAX_OFFLINE}s. Initiating REBOOT...")
+                # Reboot the entire device to recover the video service
+                force_reboot(f"video-stream-unavailable-for-{WATCHDOG_MAX_OFFLINE}s")
 
             if (now - _last_connect_attempt) >= current_wait:
                 _sio_initialized = True
