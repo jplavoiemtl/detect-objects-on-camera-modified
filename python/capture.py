@@ -74,6 +74,10 @@ FRESH_RETRY_SLEEP = 0.05   # seconds
 # If no fresh frame arrives for this long while "connected", force reconnect
 STALE_RECONNECT_AGE = 30.0  # seconds (increased from 15.0 for stability)
 STALE_CHECK_INTERVAL = 5.0  # seconds
+WATCHDOG_MAX_OFFLINE = 300.0 # 5 minutes max offline time before self-restart
+
+# Global state for optimization
+_last_successful_url = ""
 
 
 def _setup_socketio():
@@ -206,7 +210,7 @@ def _get_local_ip():
 
 def _connect_socketio():
     """Connect to the video stream via Socket.IO."""
-    global _sio_client, _sio_connected, _connection_attempt_count
+    global _sio_client, _sio_connected, _connection_attempt_count, _last_successful_url
 
     if _sio_connected:
         return True
@@ -226,6 +230,10 @@ def _connect_socketio():
         # Build URL list - explicit IP override takes highest priority
         sio_urls = []
         
+        # Priority 0: Last known successful URL (if any)
+        if _last_successful_url:
+            sio_urls.append(_last_successful_url)
+
         # Priority 1: Explicit IP override (most reliable when DNS fails)
         # IMPROVEMENT: This is checked first to ensure we don't waste time on failing updates
         if VIDEO_RUNNER_IP:
@@ -258,18 +266,23 @@ def _connect_socketio():
         sio_urls = list(dict.fromkeys(sio_urls))
 
         failed_urls = []
+        connected = False
+        
         for url in sio_urls:
             try:
                 _sio_client.connect(
                     url, 
-                    wait_timeout=20
+                    wait_timeout=5 
                 )
-                time.sleep(1.0)
+                time.sleep(0.5)
 
                 if _sio_connected:
-                    print(f"[CAPTURE] ✓ Connected to {url} (attempt #{_connection_attempt_count})")
+                    if should_log:
+                        print(f"[CAPTURE] ✓ Connected to {url} (attempt #{_connection_attempt_count})")
                     _connection_attempt_count = 0  # Reset on success
-                    return True
+                    _last_successful_url = url     # Remember this URL
+                    connected = True
+                    break
             except Exception as e:
                 err_str = str(e)
                 if "Already connected" in err_str or "disconnected state" in err_str:
@@ -285,13 +298,16 @@ def _connect_socketio():
                 # Collect failures for summary
                 short_err = err_str.split("(Caused by")[0].strip() if "(Caused by" in err_str else err_str[:50]
                 failed_urls.append((url, short_err))
+                
+                # Cleanup partially failed connection attempts immediately
+                try:
+                    if _sio_client.eio:
+                        _sio_client.eio.disconnect(abort=True)
+                except:
+                    pass
 
-            finally:
-                if not _sio_connected and _sio_client is not None:
-                    try:
-                        _sio_client.disconnect()
-                    except Exception:
-                        pass
+        if connected:
+            return True
 
         # Log summary (only periodically to reduce spam)
         if should_log:
@@ -304,6 +320,12 @@ def _connect_socketio():
                 print(f"[CAPTURE] 💡 Or set VIDEO_RUNNER_IP=<ip> to force a specific IP")
 
         # Destroy client to ensure fresh start
+        try:
+            if _sio_client:
+                _sio_client.disconnect()
+        except:
+            pass
+            
         _sio_client = None
         _sio_connected = False
         return False
@@ -329,7 +351,6 @@ def capture_frame():
             return _latest_frame.copy()
             
 
-
     # Use stale frame if within acceptable limits
     if _latest_frame is not None:
         age = _frame_age(now)
@@ -337,8 +358,9 @@ def capture_frame():
             return _latest_frame.copy()
         else:
             # Stale frame, treat as unavailable to force retry
-            print(f"[CAPTURE] Stale frame age={age:.1f}s; ignoring")
-
+            # Only log excessively stale frames once in a while to avoid spam
+            if age > 10.0 and int(age) % 5 == 0:
+                print(f"[CAPTURE] Stale frame age={age:.1f}s; ignoring")
 
             # If the frame is EXTREMELY stale (e.g. > 10s), force a disconnect
             if age > 10.0 and _sio_connected:
@@ -354,19 +376,53 @@ def capture_frame():
 
 
 def _reconnect_loop():
-    """Background reconnect loop to recover the video stream when idle."""
+    """Background reconnect loop to recover the video stream when idle.
+       Implements exponential backoff to reduce load during extended outages.
+    """
     global _sio_initialized, _last_connect_attempt, _sio_connected
+    
+    current_wait = _reconnect_interval
+    max_wait = 60.0
+    disconnect_start_time = None
+    
     while True:
         now = time.time()
-        if not _sio_connected and (now - _last_connect_attempt) >= _reconnect_interval:
-            _sio_initialized = True
-            _last_connect_attempt = now
-            # Suppress reconnection messages to reduce terminal noise
-            if _connect_socketio():
-                pass  # Connection succeeded silently
-            else:
-                pass  # Connection failed silently
-        time.sleep(1.0)
+        
+        # Only attempt reconnect if disconnected and wait time has passed
+        if not _sio_connected:
+            
+            # Watchdog tracking
+            if disconnect_start_time is None:
+                disconnect_start_time = now
+            elif (now - disconnect_start_time) > WATCHDOG_MAX_OFFLINE:
+                print(f"[CAPTURE] FATAL: Video stream unavailable for >{WATCHDOG_MAX_OFFLINE}s. Initiating self-restart...")
+                # Exit with error to trigger supervisor restart
+                os._exit(1)
+
+            if (now - _last_connect_attempt) >= current_wait:
+                _sio_initialized = True
+                _last_connect_attempt = now
+                
+                if _connect_socketio():
+                    # Reset backoff on success
+                    current_wait = _reconnect_interval
+                    disconnect_start_time = None # Reset watchdog
+                else:
+                    # Exponential backoff on failure: 5s -> 10s -> 20s -> 40s -> 60s
+                    current_wait = min(current_wait * 2, max_wait)
+                    if _connection_attempt_count % 10 == 0 or _connection_attempt_count < 5:
+                       # Only print occasionally to avoid spam
+                       pass
+            
+            # Shorter sleep to remain responsive to shutdown, but don't spin tight
+            time.sleep(1.0)
+        else:
+            # While connected, check periodically but don't do anything
+            # Reset backoff so next failure starts fresh
+            if current_wait > _reconnect_interval:
+                current_wait = _reconnect_interval
+            disconnect_start_time = None
+            time.sleep(1.0)
 
 
 def _stale_watchdog_loop():
