@@ -16,6 +16,9 @@ from mqtt_client import (
 HEALTH_CHECK_INTERVAL = 30          # seconds between health checks
 REBOOT_GRACE_SECONDS = 5 * 60       # if no progress for this long AND MQTT down, reboot
 
+# Video runner container name (used by Arduino App Lab)
+VIDEO_RUNNER_CONTAINER = "detect-objects-on-camera-modified-ei-video-obj-detection-runner-1"
+
 _health_thread_started = False
 last_progress_time = time.time()
 last_mqtt_ok = time.time()
@@ -27,6 +30,25 @@ def mark_progress(reason: str = ""):
     last_progress_time = time.time()
     if reason:
         print(f"[HEALTH] progress: {reason}")
+
+
+def restart_video_runner_container() -> bool:
+    """Restart the video runner Docker container to recover from stuck state.
+
+    Returns True if restart command succeeded, False otherwise.
+    """
+    print(f"[HEALTH] Attempting to restart video runner container: {VIDEO_RUNNER_CONTAINER}")
+    try:
+        result = os.system(f"docker restart {VIDEO_RUNNER_CONTAINER}")
+        if result == 0:
+            print(f"[HEALTH] ✓ Video runner container restarted successfully")
+            return True
+        else:
+            print(f"[HEALTH] ✗ Container restart failed with code {result}")
+            return False
+    except Exception as e:
+        print(f"[HEALTH] ✗ Container restart error: {e}")
+        return False
 
 
 def force_reboot(reason: str):

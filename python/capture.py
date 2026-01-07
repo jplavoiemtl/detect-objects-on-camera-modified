@@ -41,7 +41,7 @@ from persistence import (
     delete_oldest_detection,
     save_detection_to_log,
 )
-from health_monitor import force_reboot
+from health_monitor import restart_video_runner_container
 
 # Use environment variables if available, otherwise defaults
 VIDEO_STREAM_PORT = int(os.environ.get("VIDEO_RUNNER_PORT", 4912))
@@ -396,9 +396,13 @@ def _reconnect_loop():
             if disconnect_start_time is None:
                 disconnect_start_time = now
             elif (now - disconnect_start_time) > WATCHDOG_MAX_OFFLINE:
-                print(f"[CAPTURE] FATAL: Video stream unavailable for >{WATCHDOG_MAX_OFFLINE}s. Initiating REBOOT...")
-                # Reboot the entire device to recover the video service
-                force_reboot(f"video-stream-unavailable-for-{WATCHDOG_MAX_OFFLINE}s")
+                print(f"[CAPTURE] Video stream unavailable for >{WATCHDOG_MAX_OFFLINE}s. Restarting video runner container...")
+                # Restart the video runner container to recover the video service
+                if restart_video_runner_container():
+                    # Reset watchdog timer to give the container time to recover
+                    disconnect_start_time = now
+                else:
+                    print(f"[CAPTURE] Container restart failed, will retry on next cycle")
 
             if (now - _last_connect_attempt) >= current_wait:
                 _sio_initialized = True
