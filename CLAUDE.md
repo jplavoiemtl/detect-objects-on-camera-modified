@@ -29,7 +29,7 @@ Access the web UI at `<board-hostname>.local:7000` (e.g., `unoq.local:7000`).
 - `mqtt_client.py` - MQTT client for publishing detection events and device status
 - `mqtt_secrets.py` - MQTT credentials (broker IP, port, username, password, client ID)
 - `persistence.py` - Detection history storage in `data/imageslist.log` (JSON lines) and image rotation
-- `health_monitor.py` - Watchdog that reboots the device if MQTT is down and no progress for 5 minutes
+- `health_monitor.py` - Watchdog that restarts the video runner container on failure, and attempts device reboot if MQTT is down for 5 minutes
 - `ui_handlers.py` - WebSocket event handlers for frontend communication
 
 **Arduino App Bricks Used:**
@@ -54,7 +54,10 @@ In `inner_main.py`:
 In `capture.py`:
 - `VIDEO_STREAM_PORT = 4912` - Video runner Socket.IO port
 - `MODEL_INPUT_SIZE = 416` - YOLO input dimensions for bbox scaling
-- `WATCHDOG_MAX_OFFLINE = 300` - Seconds before video stream watchdog triggers reboot
+- `WATCHDOG_MAX_OFFLINE = 300` - Seconds before video stream watchdog restarts the video runner container
+
+In `health_monitor.py`:
+- `VIDEO_RUNNER_CONTAINER` - Docker container name for the video runner service
 
 In `persistence.py`:
 - `MAX_DETECTION_IMAGES = 40` - Max saved detection images before rotation
@@ -79,6 +82,27 @@ In `persistence.py`:
 
 - `unoq/status` - Device heartbeat (online/offline/active/idle)
 - `unoq/detection` - Detection events with label, confidence, bbox
+
+## Docker Architecture
+
+The app runs as two Docker containers managed by Arduino App Lab:
+
+1. **Main container** (`detect-objects-on-camera-modified-main-1`) - Runs the Python app on port 7000
+2. **Video runner container** (`detect-objects-on-camera-modified-ei-video-obj-detection-runner-1`) - Runs the video/inference service on port 4912
+
+### Video Runner Recovery
+
+The video runner can get stuck in a crash loop (GStreamer failures). When this happens:
+- Container shows as `(unhealthy)` in `docker ps`
+- WebSocket connections fail with "did not receive a valid HTTP response"
+- The `VideoObjectDetection` brick fails to connect
+
+**Automatic recovery**: After 5 minutes of failed video stream connections, `capture.py` triggers `restart_video_runner_container()` which runs `docker restart` on the video runner container.
+
+**Manual recovery**:
+```bash
+docker restart detect-objects-on-camera-modified-ei-video-obj-detection-runner-1
+```
 
 ## Environment Variables
 

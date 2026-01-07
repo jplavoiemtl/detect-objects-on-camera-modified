@@ -13,3 +13,6 @@ Thumbs.db
 **/mqtt_secrets.py
 # Generated detection images
 assets/images/
+# Editor local settings
+settings.local.json.claude
+.claude/
