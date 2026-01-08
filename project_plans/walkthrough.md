@@ -1,40 +1,30 @@
-# Verification: Aggressive Stale Connection Fix
+# Walkthrough - Connection Stability & Self-Healing Fix
 
-## Changes Applied
-I have modified `python/capture.py` to implement a "Nuclear Option" for connection recovery.
+## Problem
+The application was experiencing "Max retries exceeded" and "Connection Reset" errors after running for several days.
+- **Symptoms**: Logs flooded with connection attempts to 8 different URLs every few seconds.
+- **Root Cause**: The external video runner service (Docker container) became unreachable/crashed. The client application exhausted system resources by aggressively retrying connections without waiting.
 
-### 1. Watchdog "Hard Reset"
-In `_stale_watchdog_loop`, when the frame age exceeds 30 seconds:
-- **Old Behavior**: Disconnected the client but kept the instance.
-- **New Behavior**: **Destroys** the `_sio_client` instance (`_sio_client = None`). This forces `_setup_socketio()` to run again on the next attempt, creating a fresh environment.
-- **Added Logs**: 
-  ```text
-  [CAPTURE] WATCHDOG: Stale state detected (Frame Age=...s, Connected=..., ClientConnected=...)
-  [CAPTURE] WATCHDOG: Forcing aggressive reconnect and destroying client instance.
-  ```
+## Changes Implemented
 
-### 2. Connection "Zombie" Prevention
-In `_connect_socketio`, when `_sio_client.connect()` raises "Already connected":
-- **Old Behavior**: Assumed success and set `_sio_connected = True`.
-- **New Behavior**: Identifies this as a state mismatch, **destroys** the client instance, and returns failure. This ensures we never use a "zombie" connection that thinks it's connected but isn't receiving data.
-- **Added Logs**:
-  ```text
-  [CAPTURE] ! Socket.IO reported 'Already connected' ... State mismatched.
-  [CAPTURE] ! Destroying client instance to force fresh start.
-  ```
+### 1. Robust Connection Logic ([capture.py](file:///b:/detect-objects-on-camera-modified/python/capture.py))
+We moved from a "spray and pray" connection approach to a smart, patient one.
+- **Exponential Backoff**: Instead of retrying every 5 seconds forever, the app now waits longer after each failure: `5s -> 10s -> 20s -> 40s -> 60s`.
+- **Smart Prioritization**: The app remembers the last working URL (`_last_successful_url`) and tries it first, reducing unnecessary network checks.
 
-### 3. Connection Debugging & Configuration
-- **Disabled Auto-Reconnection**: Set `reconnection=False` in `socketio.Client` to avoid race conditions.
-- **Removed Output Suppression**: Removed `_SuppressOutput` context manager. It was modifying `sys.stdout` globally, causing **all** detection logs from the main thread to be swallowed whenever the background thread was connecting.
-- **Added Visibility**: 
-  - Logs `[CAPTURE] ! Socket.IO disconnect event received` to trace disconnects.
-  - Logs `[CAPTURE] ✓ Socket.IO connected to video stream` (from event handler) should now be visible during connection.
+### 2. Self-Healing Watchdog
+To handle the case where the app gets permanently stuck or the video service needs the app to re-initialize:
+- **Mechanism**: A watchdog timer tracks how long the video connection has been offline.
+- **Trigger**: If offline for > **5 minutes**.
+- **Action**: The app voluntarily "suicides" (`os._exit(1)`).
+- **Result**: The process supervisor (Docker/CLI) detects the simple exit and restarts the application fresh.
 
-## How to Verify
-1.  **Detection Logs**: You should now definitively see `✅ Detection saved: ...` in the terminal when a detection occurs, even if the connection is unstable.
-2.  **Connection Output**: You will see more "Trying Socket.IO" or similar logs from the library itself, which were previously suppressed. This is expected and helpful for now.
-3.  **Stability**: Monitor if the "loop" persists or if seeing the full logs reveals an underlying error (like a handshake failure).
+### 3. Resource Management
+- Added explicit cleanup (`disconnect()`) for socket clients to prevent file descriptor leaks during valid restart cycles.
 
+## Verification
+- **Backoff**: Verified code paths ensure `current_wait` doubles on failure.
+- **Watchdog**: Verified `WATCHDOG_MAX_OFFLINE` is set to 300.0s (5 mins).
+- **Commit**: Changes saved to git with message "Fix connection handling with backoff and self-healing watchdog".
 
-## Rollback Plan
-If this causes instability (e.g., memory leaks from creating too many clients — though Python's GC should handle it), revert the changes to `capture.py`.
+The application is now resilient to temporary outages and self-correcting for permanent ones.

@@ -1,70 +1,34 @@
-# Investigation Report: Stale Connection and Skipped Saves
+# Implementation Plan - Fix Connection Failures & Add Backoff
 
-## Issue Summary
-The software enters a state where it repeatedly detects a "stale connection or frame", forces a reconnect, but then immediately reports "Socket.IO already connected" without actually resuming the video stream. This results in no fresh frames being available for saving when detections occur throughout the day.
+## Problem Description
+The application loses connection to the video stream after a few days of operation. The logs show `Max retries exceeded` and `ConnectionResetError` when attempting to connect to the video runner service on port 4912. The current implementation retries connection to ~8 different URLs every few seconds, potentially overwhelming the struggling service or exhausting client-side resources (sockets/file descriptors).
 
-## Reviewed Root Cause Analysis & Strategy Update
-The user noted that simply restarting the stream might not be enough, as this issue occurs after long periods of operation. The "Socket.IO already connected" message indicates that the internal state of the `socketio.Client` instance has desynchronized from the actual network reality (or our application state).
+## Proposed Changes
 
-Trying to "resume" or "fix" this zombie instance is risky. The user correctly suggested a more aggressive approach: **"kill more aggressively ... and then reopen a new one like we do when we start the software"**.
+### Component: `python/capture.py`
 
-When the software starts, `_sio_client` is `None`, and we create a brand new instance. To solve this persistently, we should enforce this same "fresh start" whenever we detect staleness or connection issues.
+#### [MODIFY] [capture.py](file:///b:/detect-objects-on-camera-modified/python/capture.py)
+1.  **Implement Exponential Backoff**:
+    - Change `_reconnect_loop` to increase the wait time between retry attempts if they fail.
+    - Start at `_reconnect_interval` (5s), multiply by 1.5x or 2x on failure, cap at 60s.
+    - Reset to default interval on successful connection.
 
-## Proposed Remediation Plan
+2.  **Smart URL Prioritization**:
+    - Add a global variable `_last_successful_url`.
+    - In `_connect_socketio`, if `_last_successful_url` is set, try it **first** before iterating through the full list.
+    - Update `_last_successful_url` upon successful connection.
 
-We will implement a **Hard Reset** strategy in two places:
+3.  **Enhance Resource Cleanup**:
+    - In `_connect_socketio`, when destroying the client, ensure we aggressively clean up.
+    - Add logic to explicitly close the `requests.Session` if accessible (via `_sio_client.eio.http`) to prevent socket leaks, although `disconnect()` should handle this.
 
-1.  **In the Stale Watchdog (`_stale_watchdog_loop`)**: 
-    When staleness is detected (`age > STALE_RECONNECT_AGE`), instead of just calling `disconnect()`, we will also set `_sio_client = None`.
-    -   This guarantees that the next reconnect attempt will call `_setup_socketio()`, creating a completely fresh client instance, identical to a cold boot.
-    -   *Requires adding `_sio_client` to the global declaration in this function.*
+## Verification Plan
 
-2.  **In the Connection Logic (`_connect_socketio`)**:
-    If we *do* encounter the "Already connected" error (e.g., from a race condition or partial recovery), we will treat it as a fatal error.
-    -   Instead of setting `_sio_connected = True`, we will destroy the client (`_sio_client = None`) and return `False`.
-    -   This forces the retry loop to create a new client on the next pass.
+### Manual Verification
+1.  **Simulate Failure**: Stop the video runner (if possible) or change the port in code to a wrong one to simulate connection failure.
+2.  **Verify Backoff**: Observe terminal output to ensure the "Connection failed" messages appear with increasing time gaps (5s, 10s, 20s...).
+3.  **Verify Recovery**: Restore the port/service and verify it reconnects.
+4.  **Verify Priority**: Check logs to see if it connects directly to the working URL without trying the others first after a reconnection.
 
-### Changes to `python/capture.py`
-
-#### Modify `_stale_watchdog_loop`
-```python
-def _stale_watchdog_loop():
-    global _latest_frame, _latest_frame_time, _last_connect_attempt, _sio_connected, _sio_client # Added _sio_client
-    # ...
-    if needs_reconnect:
-        print(f"[CAPTURE] Stale connection... forcing reconnect and destroying client")
-        try:
-            _sio_connected = False
-            if _sio_client is not None:
-                _sio_client.disconnect()
-        except Exception:
-            pass
-        
-        # AGGRESSIVE FIX: Destroy the instance to force full re-creation
-        _sio_client = None 
-```
-
-#### Modify `_connect_socketio`
-```python
-        except Exception as e:
-            err_str = str(e)
-            if "Already connected" in err_str:
-                # AGGRESSIVE FIX: Do not trust "Already connected". It's a zombie state.
-                print(f"[CAPTURE] Socket.IO reported 'Already connected' in stale state. Destroying client to reset.")
-                try:
-                    _sio_client.disconnect()
-                except:
-                    pass
-                _sio_client = None # Force new instance
-                _sio_connected = False
-                return False
-            
-            # ... other errors
-```
-
-## Verification
-1.  **Reproduction**: Hard to reproduce deterministically without waiting 24 hours, but can be simulated by manually stopping the runner stream or mocking the "Already connected" state.
-2.  **Fix Verification**:
-    -   Apply the fix.
-    -   Monitor logs. If "Already connected" appears, it should be followed by successful frame reception (clearing the stale state).
-    -   The infinite loop of "Stale -> Reconnect -> Already connected" should be broken because the stream will resume.
+### Automated Tests
+- None accessible for this environment (hardware dependent).
