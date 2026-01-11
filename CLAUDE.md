@@ -45,7 +45,7 @@ Access the web UI at `<board-hostname>.local:7000` (e.g., `arduino-q.local:7000`
 - `mqtt_client.py` - MQTT client for publishing detection events and device status
 - `mqtt_secrets.py` - MQTT credentials (broker IP, port, username, password, client ID)
 - `persistence.py` - Detection history storage in `data/imageslist.log` (JSON lines) and image rotation
-- `health_monitor.py` - Watchdog that restarts the video runner container on failure, and attempts device reboot if MQTT is down for 5 minutes
+- `health_monitor.py` - Watchdog that monitors MQTT connectivity and attempts device reboot if MQTT is down for 5 minutes
 - `ui_handlers.py` - WebSocket event handlers for frontend communication
 
 **Arduino App Bricks Used:**
@@ -70,10 +70,6 @@ In `inner_main.py`:
 In `capture.py`:
 - `VIDEO_STREAM_PORT = 4912` - Video runner Socket.IO port
 - `MODEL_INPUT_SIZE = 416` - YOLO input dimensions for bbox scaling
-- `WATCHDOG_MAX_OFFLINE = 300` - Seconds before video stream watchdog restarts the video runner container
-
-In `health_monitor.py`:
-- `VIDEO_RUNNER_CONTAINER` - Docker container name for the video runner service
 
 In `persistence.py`:
 - `MAX_DETECTION_IMAGES = 40` - Max saved detection images before rotation
@@ -113,11 +109,24 @@ The video runner can get stuck in a crash loop (GStreamer failures). When this h
 - WebSocket connections fail with "did not receive a valid HTTP response"
 - The `VideoObjectDetection` brick fails to connect
 
-**Automatic recovery**: After 5 minutes of failed video stream connections, `capture.py` triggers `restart_video_runner_container()` which runs `docker restart` on the video runner container.
+**Automatic recovery via host cron job**: The main app container is sandboxed and cannot restart sibling containers. Instead, a cron job runs on the Arduino UNO Q host every 2 minutes to check for unhealthy containers and restart them:
+
+```bash
+# Installed on host via: ssh arduino@arduino-q.local
+# View with: crontab -l
+*/2 * * * * docker ps --filter "name=detect-objects-on-camera-modified-ei-video-obj-detection-runner-1" --filter "health=unhealthy" -q | grep -q . && docker restart detect-objects-on-camera-modified-ei-video-obj-detection-runner-1 >> /tmp/video_restart.log 2>&1
+```
+
+The video runner has a built-in healthcheck (pings port 4912 every 2s, 25 retries). After ~50 seconds of failures, it's marked unhealthy and the cron job restarts it. The main app's Socket.IO reconnection logic (`capture.py`) automatically reconnects once the container recovers.
 
 **Manual recovery**:
 ```bash
 docker restart detect-objects-on-camera-modified-ei-video-obj-detection-runner-1
+```
+
+**Check restart log**:
+```bash
+cat /tmp/video_restart.log
 ```
 
 ## Environment Variables
