@@ -28,8 +28,11 @@ from persistence import (
     delete_oldest_detection,
     init_data_directories,
     load_detection_history,
+    load_settings,
     rewrite_log_file,
+    flush_settings,
     save_detection_to_log,
+    save_settings,
 )
 from capture import (
     capture_and_save_detection,
@@ -84,8 +87,19 @@ def heartbeat():
 
 # Configuration
 DEBOUNCE_SECONDS = 60
-DETECTION_CONFIDENCE = 0.6
-DETECTION_LABEL = "bottle"     # change this to "bottle", "car", "person", etc.
+_DEFAULT_CONFIDENCE = 0.6
+_DEFAULT_LABEL = "bottle"
+
+# Initialize data directories and load persisted settings
+init_data_directories()
+
+_saved = load_settings({
+    "confidence": _DEFAULT_CONFIDENCE,
+    "label": _DEFAULT_LABEL,
+})
+DETECTION_CONFIDENCE = float(_saved["confidence"])
+DETECTION_LABEL = str(_saved["label"])
+
 detected_labels = {DETECTION_LABEL.lower()}
 labels_emitted_once = False
 
@@ -93,8 +107,7 @@ labels_emitted_once = False
 detection_history = []
 next_detection_id = 1
 
-# Initialize data directories and load history on startup
-init_data_directories()
+# Load detection history
 detection_history, next_detection_id = load_detection_history()
 
 # Components
@@ -257,11 +270,19 @@ def on_detections(detections: dict):
 
 
 detection_stream.on_detect_all(on_detections)
+def _set_confidence(v):
+    globals()["DETECTION_CONFIDENCE"] = v
+    save_settings({"confidence": v, "label": DETECTION_LABEL})
+
+def _set_label(v):
+    globals()["DETECTION_LABEL"] = v
+    save_settings({"confidence": DETECTION_CONFIDENCE, "label": v})
+
 ui.on_message(
     "override_th",
     lambda sid, val: handle_confidence_override(
         detection_stream,
-        lambda v: globals().__setitem__("DETECTION_CONFIDENCE", v),
+        _set_confidence,
         sid,
         val,
     ),
@@ -270,7 +291,7 @@ ui.on_message(
     "override_label",
     lambda sid, val: handle_label_override(
         detected_labels,
-        lambda v: globals().__setitem__("DETECTION_LABEL", v),
+        _set_label,
         sid,
         val,
         lambda: emit_detected_labels(ui, detected_labels, DETECTION_LABEL),
@@ -307,11 +328,14 @@ emit_detected_labels(ui, detected_labels, DETECTION_LABEL)
 def shutdown_handler(signum, frame):
     """Handle shutdown signals to ensure clean exit."""
     print("\n🛑 Shutdown signal received. Cleaning up...")
-    
+
+    # Flush any pending settings to disk before exit
+    flush_settings()
+
     # Turn off LED
     if led_on:
         set_led(False)
-    
+
     # Publish offline status
     try:
         safe_publish(

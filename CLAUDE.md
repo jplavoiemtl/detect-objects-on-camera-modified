@@ -44,7 +44,7 @@ Access the web UI at `<board-hostname>.local:7000` (e.g., `arduino-q.local:7000`
 - `capture.py` - Video frame capture via Socket.IO from the video runner service (port 4912). Handles reconnection, staleness detection, and bbox scaling
 - `mqtt_client.py` - MQTT client for publishing detection events and device status
 - `mqtt_secrets.py` - MQTT credentials (broker IP, port, username, password, client ID)
-- `persistence.py` - Detection history storage in `data/imageslist.log` (JSON lines) and image rotation
+- `persistence.py` - Detection history storage in `data/imageslist.log` (JSON lines), image rotation, and persistent settings (`data/settings.json`) with debounced atomic writes
 - `health_monitor.py` - Watchdog that monitors MQTT connectivity and attempts device reboot if MQTT is down for 5 minutes
 - `ui_handlers.py` - WebSocket event handlers for frontend communication
 
@@ -63,8 +63,8 @@ Access the web UI at `<board-hostname>.local:7000` (e.g., `arduino-q.local:7000`
 
 In `inner_main.py`:
 - `DEBOUNCE_SECONDS = 60` - LED stays on this long after detection
-- `DETECTION_CONFIDENCE = 0.6` - Default detection threshold
-- `DETECTION_LABEL = "bottle"` - Target object label
+- `_DEFAULT_CONFIDENCE = 0.6` - Default detection threshold (overridden by `data/settings.json` if present)
+- `_DEFAULT_LABEL = "bottle"` - Default target object label (overridden by `data/settings.json` if present)
 - `LOCAL_TIMEZONE = 'America/Montreal'` - Timestamp timezone
 
 In `capture.py`:
@@ -73,8 +73,10 @@ In `capture.py`:
 
 In `persistence.py`:
 - `MAX_DETECTION_IMAGES = 40` - Max saved detection images before rotation
+- `SETTINGS_SAVE_DEBOUNCE = 3` - Seconds to wait before writing settings to disk (coalesces rapid changes)
 - Detection images saved to `assets/images/` (served by WebUI)
 - Log file at `data/imageslist.log`
+- Settings file at `data/settings.json` (persists confidence & label across restarts)
 
 ### WebSocket Events (Frontend <-> Backend)
 
@@ -135,6 +137,7 @@ cat /tmp/video_restart.log
 - `VIDEO_RUNNER_HOST` - Override video runner hostname
 - `VIDEO_RUNNER_IP` - Force specific IP when DNS fails
 
-## Artifact Archival Rule
+## Planning and Documentation Rules
 
-When modifying `task.md`, `implementation_plan.md`, or `walkthrough.md` in internal planning directories, copy them to `project_plans/` directory in the project root.
+- **All implementation plans must be written to `project_plans/`** in the project root. When creating plans for new features or changes, write them as markdown files in `project_plans/` (e.g., `project_plans/persistent_settings_plan.md`).
+- When modifying `task.md`, `implementation_plan.md`, or `walkthrough.md` in internal planning directories, also copy them to `project_plans/`.

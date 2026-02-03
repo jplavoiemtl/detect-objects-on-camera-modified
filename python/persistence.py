@@ -1,11 +1,14 @@
 import json
 import os
+import tempfile
+import threading
 from typing import List, Tuple
 
 MAX_DETECTION_IMAGES = 40  # Maximum number of saved detection images
 DATA_DIR = "data"
 IMAGES_DIR = os.path.join("assets", "images")  # Save to assets so WebUI can serve them
 LOG_FILE = os.path.join(DATA_DIR, "imageslist.log")
+SETTINGS_FILE = os.path.join(DATA_DIR, "settings.json")
 
 
 def init_data_directories():
@@ -76,6 +79,76 @@ def rewrite_log_file(detection_history: List[dict]):
                 f.write(json.dumps(entry) + "\n")
     except Exception as e:
         print(f"[HISTORY] Error rewriting log file: {e}")
+
+
+def load_settings(defaults: dict) -> dict:
+    """Load settings from settings.json, falling back to defaults if missing/corrupt."""
+    if not os.path.exists(SETTINGS_FILE):
+        print("[SETTINGS] No settings file found, using defaults")
+        return dict(defaults)
+    try:
+        with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+            saved = json.load(f)
+        merged = dict(defaults)
+        merged.update(saved)
+        print(f"[SETTINGS] Loaded settings: {merged}")
+        return merged
+    except Exception as e:
+        print(f"[SETTINGS] Warning: could not read {SETTINGS_FILE}: {e}, using defaults")
+        return dict(defaults)
+
+
+SETTINGS_SAVE_DEBOUNCE = 3  # seconds to wait before writing settings to disk
+
+_pending_settings = None
+_save_timer = None
+_save_lock = threading.Lock()
+
+
+def _write_settings_to_disk(settings: dict):
+    """Atomically write settings to settings.json (write-to-temp-then-rename)."""
+    try:
+        fd, tmp_path = tempfile.mkstemp(dir=DATA_DIR, suffix=".tmp")
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(settings, f, indent=2)
+        os.replace(tmp_path, SETTINGS_FILE)
+        print(f"[SETTINGS] Saved settings: {settings}")
+    except Exception as e:
+        print(f"[SETTINGS] Error saving settings: {e}")
+
+
+def _debounce_fire():
+    """Timer callback: write the pending settings to disk."""
+    global _pending_settings, _save_timer
+    with _save_lock:
+        if _pending_settings is not None:
+            _write_settings_to_disk(_pending_settings)
+            _pending_settings = None
+        _save_timer = None
+
+
+def save_settings(settings: dict):
+    """Schedule a debounced settings write. Only the last call within the debounce window is saved."""
+    global _pending_settings, _save_timer
+    with _save_lock:
+        _pending_settings = dict(settings)
+        if _save_timer is not None:
+            _save_timer.cancel()
+        _save_timer = threading.Timer(SETTINGS_SAVE_DEBOUNCE, _debounce_fire)
+        _save_timer.daemon = True
+        _save_timer.start()
+
+
+def flush_settings():
+    """Immediately write any pending settings to disk. Call this on shutdown."""
+    global _pending_settings, _save_timer
+    with _save_lock:
+        if _save_timer is not None:
+            _save_timer.cancel()
+            _save_timer = None
+        if _pending_settings is not None:
+            _write_settings_to_disk(_pending_settings)
+            _pending_settings = None
 
 
 def delete_oldest_detection(detection_history: List[dict]) -> None:
