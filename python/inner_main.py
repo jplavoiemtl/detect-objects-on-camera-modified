@@ -36,8 +36,6 @@ from persistence import (
 )
 from capture import (
     capture_and_save_detection,
-    capture_frame,
-    scale_bbox_to_frame,
     start_capture_reconnect_daemon,
 )
 from health_monitor import mark_progress, start_health_monitor
@@ -214,23 +212,14 @@ def on_detections(detections: dict):
         confidence = det.get("confidence", 0)
         mark_progress("detection")
         bbox_xyxy = det.get("bounding_box_xyxy", [])
-        frame = capture_frame()
-        bbox_scaled = (
-            scale_bbox_to_frame(
-                bbox_xyxy, frame.shape if frame is not None else None
-            )
-            if bbox_xyxy
-            else None
-        )
 
         # Turn LED on if not already on
         if not led_on:
             set_led(True)
 
-            # Normalize bbox to current frame dimensions when available
-            bbox_source = bbox_scaled if bbox_scaled else bbox_xyxy
-            if bbox_source and len(bbox_source) == 4:
-                x1, y1, x2, y2 = bbox_source
+            # Use raw bbox for MQTT (no frame needed)
+            if bbox_xyxy and len(bbox_xyxy) == 4:
+                x1, y1, x2, y2 = bbox_xyxy
                 bbox = {
                     "x": int(x1),
                     "y": int(y1),
@@ -251,7 +240,7 @@ def on_detections(detections: dict):
             else:
                 print(f"[MQTT] Failed to publish detection for {DETECTION_LABEL}")
 
-            # Save detection image at the same time we publish MQTT
+            # Capture frame after MQTT — gives reconnect time to complete if stream was stale
             entry, next_detection_id = capture_and_save_detection(
                 DETECTION_LABEL,
                 confidence,
@@ -259,7 +248,6 @@ def on_detections(detections: dict):
                 detection_history=detection_history,
                 next_detection_id=next_detection_id,
                 timezone=LOCAL_TIMEZONE,
-                frame=frame,
             )
             if entry:
                 emit_detection_saved(ui, detection_history, entry)

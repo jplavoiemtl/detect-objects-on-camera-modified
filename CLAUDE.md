@@ -43,7 +43,7 @@ Access the web UI at `<board-hostname>.local:7000` (e.g., `arduino-q.local:7000`
 
 **Core Modules:**
 
-- `capture.py` - Video frame capture via Socket.IO from the video runner container (`ei-video-obj-detection-runner:4912`). Handles reconnection, staleness detection, and bbox scaling
+- `capture.py` - Video frame capture via Socket.IO from the video runner container (`ei-video-obj-detection-runner:4912`). Handles reconnection, staleness detection, bbox scaling, and frame retry with immediate reconnect triggering
 - `mqtt_client.py` - MQTT client for publishing detection events and device status
 - `mqtt_secrets.py` - MQTT credentials (broker IP, port, username, password, client ID)
 - `persistence.py` - Detection history storage in `data/imageslist.log` (JSON lines), image rotation, and persistent settings (`data/settings.json`) with debounced atomic writes
@@ -76,6 +76,7 @@ In `capture.py`:
 - `VIDEO_STREAM_PORT = 4912` - Video runner Socket.IO port
 - `VIDEO_WS_HOST = "ei-video-obj-detection-runner"` - Video runner Docker hostname
 - `MODEL_INPUT_SIZE = 416` - YOLO input dimensions for bbox scaling
+- `FRESH_RETRY_TOTAL = 5.0` - Seconds to retry frame capture during detection save (triggers immediate reconnect if disconnected)
 
 In `persistence.py`:
 

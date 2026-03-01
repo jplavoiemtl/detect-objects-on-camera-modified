@@ -68,8 +68,8 @@ _video_url = f"http://{VIDEO_WS_HOST}:{VIDEO_STREAM_PORT}"
 
 # Staleness handling
 STALE_FRAME_MAX_AGE = 10.0  # seconds (increased from 5.0 for stability)
-FRESH_RETRY_TOTAL = 0.75   # seconds
-FRESH_RETRY_SLEEP = 0.05   # seconds
+FRESH_RETRY_TOTAL = 5.0    # seconds – enough time for reconnect + first frame arrival
+FRESH_RETRY_SLEEP = 0.1    # seconds
 # If no fresh frame arrives for this long while "connected", force reconnect
 STALE_RECONNECT_AGE = 30.0  # seconds (increased from 15.0 for stability)
 STALE_CHECK_INTERVAL = 5.0  # seconds
@@ -244,7 +244,7 @@ def _connect_socketio():
 
 def capture_frame():
     """Capture a single frame from the video stream via Socket.IO."""
-    global _latest_frame, _sio_connected, _latest_frame_time
+    global _latest_frame, _sio_connected, _latest_frame_time, _last_connect_attempt
 
     now = time.time()
 
@@ -282,6 +282,8 @@ def capture_frame():
                         _sio_client.disconnect()
                 except Exception:
                     pass
+                # Trigger immediate reconnect attempt
+                _last_connect_attempt = 0.0
 
     return None
 
@@ -397,11 +399,17 @@ def start_capture_reconnect_daemon(reconnect_interval: float = 5.0):
 
 def _get_fresh_frame(timeout: float = FRESH_RETRY_TOTAL, sleep_s: float = FRESH_RETRY_SLEEP):
     """Attempt to obtain a fresh frame within the timeout window."""
+    global _last_connect_attempt
     deadline = time.time() + max(0.0, timeout)
+    triggered_reconnect = False
     while True:
         frame = capture_frame()
         if frame is not None:
             return frame
+        # If disconnected, trigger immediate reconnect attempt (once)
+        if not _sio_connected and not triggered_reconnect:
+            _last_connect_attempt = 0.0
+            triggered_reconnect = True
         if time.time() >= deadline:
             return None
         time.sleep(max(0.0, sleep_s))
