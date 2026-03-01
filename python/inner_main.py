@@ -185,14 +185,11 @@ def on_detections(detections: dict):
         return float(confidence_val), bbox_xyxy
 
     # Look for the label in any casing (e.g., bottle, Bottle, BOTTLE)
-    # Print all detected objects with confidence percentage
     global labels_emitted_once
     previous_len = len(detected_labels)
     try:
         for key, value in detections.items():
             confidence_val, bbox_xyxy = normalize_detection_value(value)
-            confidence_percent = confidence_val * 100
-            print(f"{key} (Confidence: {confidence_percent:.1f}%)")
 
             canonical_label = key.strip().lower()
             if canonical_label:

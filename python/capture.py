@@ -21,8 +21,8 @@ class _StderrFilter:
         self.original_stderr = original_stderr
     
     def write(self, message):
-        # Only write if it doesn't contain the websocket-client warning
-        if 'websocket-client' not in message.lower():
+        msg_lower = message.lower()
+        if 'websocket-client' not in msg_lower and 'packet queue' not in msg_lower:
             self.original_stderr.write(message)
     
     def flush(self):
@@ -108,11 +108,7 @@ def _setup_socketio():
         @_sio_client.event
         def disconnect():
             global _sio_connected
-            print("[CAPTURE] ! Socket.IO disconnect event received")
             _sio_connected = False
-            # Don't immediately clear frames on disconnect - polling transport disconnects frequently
-            # Frames will be cleared by staleness check if they're actually old
-            # Suppress disconnect messages to reduce terminal noise (polling disconnects frequently)
 
         @_sio_client.on("*")
         def catch_all(event, *args):
@@ -370,18 +366,15 @@ def _stale_watchdog_loop():
                           (_sio_connected and _sio_client is not None and not client_connected_status)
         
         if needs_reconnect:
-            print(f"[CAPTURE] WATCHDOG: Stale state detected (Frame Age={age:.1f}s, Connected={_sio_connected}, ClientConnected={client_connected_status})")
-            print(f"[CAPTURE] WATCHDOG: Forcing aggressive reconnect and destroying client instance.")
-            
+            print(f"[CAPTURE] Stale frame ({age:.1f}s), reconnecting...")
+
             try:
                 _sio_connected = False
                 if _sio_client is not None:
                     _sio_client.disconnect()
             except Exception as e:
-                print(f"[CAPTURE] WATCHDOG: Error during disconnect: {e}")
-            
-            # AGGRESSIVE FIX: Destroy the old client to ensure a fresh clean state
-            # IMPROVEMENT: Prevents "zombie" connections where the library thinks it's connected but isn't
+                print(f"[CAPTURE] Reconnect error: {e}")
+
             _sio_client = None
             _latest_frame = None
             _latest_frame_time = 0.0

@@ -40,10 +40,8 @@ def emit_detected_labels(ui, detected_labels: Set[str], detection_label: str):
         "labels": sorted(detected_labels),
         "selected": detection_label.lower(),
     }
-    print(f"[DEBUG] Emitting labels: {labels_payload}")
     try:
         ui.send_message("labels", message=labels_payload)
-        print("[DEBUG] Labels emitted successfully")
     except Exception as e:
         print(f"[UI] Failed to emit labels: {e}")
 
@@ -87,19 +85,16 @@ def handle_label_override(detected_labels: Set[str], set_label, _sid, value, emi
 
 def handle_labels_request(emit_labels, _sid, _value):
     """Send current detected labels list to requesting client."""
-    print(f"[DEBUG] request_labels received from client sid={_sid}")
     emit_labels()
 
 
 def handle_history_request(emit_history, _sid, _value):
     """Send detection history list to requesting client."""
-    print(f"[DEBUG] request_history received from client sid={_sid}")
     emit_history()
 
 
 def handle_threshold_request(emit_threshold_fn, _sid, _value):
     """Send current detection threshold to requesting client."""
-    print(f"[DEBUG] request_threshold received from client sid={_sid}")
     emit_threshold_fn()
 
 

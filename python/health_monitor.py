@@ -30,8 +30,6 @@ def mark_progress(reason: str = ""):
     """Track activity for health decisions."""
     global last_progress_time
     last_progress_time = time.time()
-    if reason:
-        print(f"[HEALTH] progress: {reason}")
 
 
 class UnixSocketHTTPConnection(http.client.HTTPConnection):
