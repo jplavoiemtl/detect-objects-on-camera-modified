@@ -192,11 +192,7 @@ def on_detections(detections: dict):
         for key, value in detections.items():
             confidence_val, bbox_xyxy = normalize_detection_value(value)
             confidence_percent = confidence_val * 100
-            # Debug: log raw value type when confidence is suspiciously zero
-            if confidence_val == 0.0:
-                print(f"{key} (Confidence: {confidence_percent:.1f}%) [DEBUG raw type={type(value).__name__}, value={repr(value)[:200]}]")
-            else:
-                print(f"{key} (Confidence: {confidence_percent:.1f}%)")
+            print(f"{key} (Confidence: {confidence_percent:.1f}%)")
 
             canonical_label = key.strip().lower()
             if canonical_label:
