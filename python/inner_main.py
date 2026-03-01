@@ -170,6 +170,9 @@ def on_detections(detections: dict):
 
     def normalize_detection_value(val):
         """Return (confidence, bbox_xyxy) for mixed payload shapes."""
+        # New firmware sends a list of dicts — unwrap the first element
+        if isinstance(val, list) and val and isinstance(val[0], dict):
+            val = val[0]
         if isinstance(val, dict):
             confidence_val = val.get("confidence", val.get("score", 0.0))
             bbox_xyxy = val.get("bounding_box_xyxy") or val.get("bbox") or []
@@ -189,14 +192,19 @@ def on_detections(detections: dict):
         for key, value in detections.items():
             confidence_val, bbox_xyxy = normalize_detection_value(value)
             confidence_percent = confidence_val * 100
-            print(f"{key} (Confidence: {confidence_percent:.1f}%)")
+            # Debug: log raw value type when confidence is suspiciously zero
+            if confidence_val == 0.0:
+                print(f"{key} (Confidence: {confidence_percent:.1f}%) [DEBUG raw type={type(value).__name__}, value={repr(value)[:200]}]")
+            else:
+                print(f"{key} (Confidence: {confidence_percent:.1f}%)")
 
             canonical_label = key.strip().lower()
             if canonical_label:
                 detected_labels.add(canonical_label)
 
             # Keep the first match for the selected detection label
-            if det is None and canonical_label == DETECTION_LABEL.lower():
+            # Only accept detections that meet the confidence threshold
+            if det is None and canonical_label == DETECTION_LABEL.lower() and confidence_val >= DETECTION_CONFIDENCE:
                 det = {
                     "confidence": confidence_val,
                     "bounding_box_xyxy": bbox_xyxy
