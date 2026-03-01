@@ -134,8 +134,7 @@ cat /tmp/video_restart.log
 ## Environment Variables
 
 - `VIDEO_RUNNER_PORT` - Override video stream port (default: 4912)
-- `VIDEO_RUNNER_HOST` - Override video runner hostname
-- `VIDEO_RUNNER_IP` - Force specific IP when DNS fails
+- `VIDEO_RUNNER_HOST` - Override video runner hostname (default: `ei-video-obj-detection-runner`)
 
 ## Planning and Documentation Rules
 

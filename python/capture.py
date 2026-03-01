@@ -1,7 +1,6 @@
 import base64
 import math
 import os
-import socket
 import sys
 import threading
 import time
@@ -46,14 +45,10 @@ from health_monitor import restart_video_runner_container
 # Use environment variables if available, otherwise defaults
 VIDEO_STREAM_PORT = int(os.environ.get("VIDEO_RUNNER_PORT", 4912))
 VIDEO_WS_HOST = os.environ.get("VIDEO_RUNNER_HOST", "ei-video-obj-detection-runner")
-# Explicit IP override - use this when mDNS/hostname resolution fails
-# IMPROVEMENT: Bypasses network discovery issues by allowing direct IP connection
-VIDEO_RUNNER_IP = os.environ.get("VIDEO_RUNNER_IP", "")
 MODEL_INPUT_SIZE = 416  # YOLO input dimension used by the Brick
 
 # Log configuration on startup
-print(f"[CAPTURE] Config: HOST={VIDEO_WS_HOST}, PORT={VIDEO_STREAM_PORT}, IP_OVERRIDE={VIDEO_RUNNER_IP or 'none'}")
-print(f"[CAPTURE] Tip: Set VIDEO_RUNNER_IP=<ip> to force a specific IP when DNS fails")
+print(f"[CAPTURE] Config: HOST={VIDEO_WS_HOST}, PORT={VIDEO_STREAM_PORT}")
 
 # Frame capture state
 _sio_initialized = False
@@ -68,6 +63,9 @@ _stale_watchdog_started = False
 _connect_lock = threading.Lock()
 _connection_attempt_count = 0  # Track attempts for log throttling
 
+# Connection URL
+_video_url = f"http://{VIDEO_WS_HOST}:{VIDEO_STREAM_PORT}"
+
 # Staleness handling
 STALE_FRAME_MAX_AGE = 10.0  # seconds (increased from 5.0 for stability)
 FRESH_RETRY_TOTAL = 0.75   # seconds
@@ -76,10 +74,6 @@ FRESH_RETRY_SLEEP = 0.05   # seconds
 STALE_RECONNECT_AGE = 30.0  # seconds (increased from 15.0 for stability)
 STALE_CHECK_INTERVAL = 5.0  # seconds
 WATCHDOG_MAX_OFFLINE = 300.0 # 5 minutes max offline time before self-restart
-
-# Global state for optimization
-_last_successful_url = ""
-
 
 def _setup_socketio():
     """Set up Socket.IO client for video stream."""
@@ -189,29 +183,9 @@ def _frame_age(now: float) -> float:
     return now - _latest_frame_time
 
 
-_local_ip_cache = None
-
-def _get_local_ip():
-    """Get the local IP address of this device (cached)."""
-    global _local_ip_cache
-    if _local_ip_cache:
-        return _local_ip_cache
-
-    try:
-        # This doesn't actually connect, just gets the local interface IP used for routing
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
-        s.close()
-        _local_ip_cache = ip
-        return ip
-    except Exception:
-        return None
-
-
 def _connect_socketio():
     """Connect to the video stream via Socket.IO."""
-    global _sio_client, _sio_connected, _connection_attempt_count, _last_successful_url
+    global _sio_client, _sio_connected, _connection_attempt_count
 
     if _sio_connected:
         return True
@@ -228,97 +202,37 @@ def _connect_socketio():
         _connection_attempt_count += 1
         should_log = _connection_attempt_count <= 1 or _connection_attempt_count % 5 == 0
 
-        # Build URL list - explicit IP override takes highest priority
-        sio_urls = []
-        
-        # Priority 0: Last known successful URL (if any)
-        if _last_successful_url:
-            sio_urls.append(_last_successful_url)
+        try:
+            _sio_client.connect(_video_url, wait_timeout=5)
+            time.sleep(0.5)
 
-        # Priority 1: Explicit IP override (most reliable when DNS fails)
-        # IMPROVEMENT: This is checked first to ensure we don't waste time on failing updates
-        if VIDEO_RUNNER_IP:
-            sio_urls.append(f"http://{VIDEO_RUNNER_IP}:{VIDEO_STREAM_PORT}")
-        
-        # Priority 2: Environment variable hostname
-        sio_urls.append(f"http://{VIDEO_WS_HOST}:{VIDEO_STREAM_PORT}")
-        
-        # Priority 3: Localhost variants (for same-device deployment)
-        sio_urls.extend([
-            f"http://127.0.0.1:{VIDEO_STREAM_PORT}",
-            f"http://localhost:{VIDEO_STREAM_PORT}",
-        ])
-        
-        # Priority 4: Known network IPs
-        sio_urls.append(f"http://192.168.30.223:{VIDEO_STREAM_PORT}")
-        
-        local_ip = _get_local_ip()
-        if local_ip:
-            sio_urls.append(f"http://{local_ip}:{VIDEO_STREAM_PORT}")
-        
-        # Priority 5: Docker and mDNS fallbacks
-        sio_urls.extend([
-            f"http://172.17.0.1:{VIDEO_STREAM_PORT}",
-            f"http://host.docker.internal:{VIDEO_STREAM_PORT}",
-            f"http://unoq.local:{VIDEO_STREAM_PORT}",
-        ])
-
-        # Remove duplicates while preserving order
-        sio_urls = list(dict.fromkeys(sio_urls))
-
-        failed_urls = []
-        connected = False
-        
-        for url in sio_urls:
-            try:
-                _sio_client.connect(
-                    url, 
-                    wait_timeout=5 
-                )
-                time.sleep(0.5)
-
-                if _sio_connected:
-                    if should_log:
-                        print(f"[CAPTURE] ✓ Connected to {url} (attempt #{_connection_attempt_count})")
-                    _connection_attempt_count = 0  # Reset on success
-                    _last_successful_url = url     # Remember this URL
-                    connected = True
-                    break
-            except Exception as e:
-                err_str = str(e)
-                if "Already connected" in err_str or "disconnected state" in err_str:
-                    print(f"[CAPTURE] ! Socket.IO state mismatch. Resetting client.")
-                    try:
-                        _sio_client.disconnect()
-                    except Exception:
-                        pass
-                    _sio_client = None
-                    _sio_connected = False
-                    return False
-                
-                # Collect failures for summary
-                short_err = err_str.split("(Caused by")[0].strip() if "(Caused by" in err_str else err_str[:50]
-                failed_urls.append((url, short_err))
-                
-                # Cleanup partially failed connection attempts immediately
+            if _sio_connected:
+                if should_log:
+                    print(f"[CAPTURE] ✓ Connected to {_video_url} (attempt #{_connection_attempt_count})")
+                _connection_attempt_count = 0  # Reset on success
+                return True
+        except Exception as e:
+            err_str = str(e)
+            if "Already connected" in err_str or "disconnected state" in err_str:
+                print(f"[CAPTURE] ! Socket.IO state mismatch. Resetting client.")
                 try:
-                    if _sio_client.eio:
-                        _sio_client.eio.disconnect(abort=True)
-                except:
+                    _sio_client.disconnect()
+                except Exception:
                     pass
+                _sio_client = None
+                _sio_connected = False
+                return False
 
-        if connected:
-            return True
+            # Cleanup partially failed connection attempt
+            try:
+                if _sio_client.eio:
+                    _sio_client.eio.disconnect(abort=True)
+            except:
+                pass
 
-        # Log summary (only periodically to reduce spam)
+        # Log failure (only periodically to reduce spam)
         if should_log:
-            print(f"[CAPTURE] ⚠ Connection failed (attempt #{_connection_attempt_count}): tried {len(sio_urls)} URLs, all failed")
-            if _connection_attempt_count == 1:
-                # First failure - show details
-                for url, err in failed_urls:
-                    print(f"[CAPTURE]   - {url}: {err}")
-                print(f"[CAPTURE] 💡 Fix: Restart app with 'arduino-app-cli app stop/start user:detect-objects-on-camera-modified'")
-                print(f"[CAPTURE] 💡 Or set VIDEO_RUNNER_IP=<ip> to force a specific IP")
+            print(f"[CAPTURE] ⚠ Connection failed (attempt #{_connection_attempt_count}): {_video_url}")
 
         # Destroy client to ensure fresh start
         try:
@@ -326,7 +240,7 @@ def _connect_socketio():
                 _sio_client.disconnect()
         except:
             pass
-            
+
         _sio_client = None
         _sio_connected = False
         return False
