@@ -37,11 +37,13 @@ Access the web UI at `<board-hostname>.local:7000` (e.g., `arduino-q.local:7000`
 ### Backend (Python)
 
 **Entry Points:**
+
 - `python/main.py` - Supervisor wrapper that auto-restarts `inner_main.py` on crash (exit code 1)
 - `python/inner_main.py` - Main application logic
 
 **Core Modules:**
-- `capture.py` - Video frame capture via Socket.IO from the video runner service (port 4912). Handles reconnection, staleness detection, and bbox scaling
+
+- `capture.py` - Video frame capture via Socket.IO from the video runner container (`ei-video-obj-detection-runner:4912`). Handles reconnection, staleness detection, and bbox scaling
 - `mqtt_client.py` - MQTT client for publishing detection events and device status
 - `mqtt_secrets.py` - MQTT credentials (broker IP, port, username, password, client ID)
 - `persistence.py` - Detection history storage in `data/imageslist.log` (JSON lines), image rotation, and persistent settings (`data/settings.json`) with debounced atomic writes
@@ -49,8 +51,9 @@ Access the web UI at `<board-hostname>.local:7000` (e.g., `arduino-q.local:7000`
 - `ui_handlers.py` - WebSocket event handlers for frontend communication
 
 **Arduino App Bricks Used:**
+
 - `WebUI` - Hosts the web interface and Socket.IO transport
-- `VideoObjectDetection` - Runs YOLO-based object detection on video frames
+- `VideoObjectDetection` - Runs YOLO-based object detection on video frames. Uses `on_detect_all` callback which sends all detections regardless of confidence. Detection values are wrapped in a list of dicts (firmware change). Python-side threshold filtering is applied in `inner_main.py`
 - `Bridge` - Controls hardware (LED state, animations)
 
 ### Frontend (assets/)
@@ -62,16 +65,20 @@ Access the web UI at `<board-hostname>.local:7000` (e.g., `arduino-q.local:7000`
 ### Key Configuration Constants
 
 In `inner_main.py`:
+
 - `DEBOUNCE_SECONDS = 60` - LED stays on this long after detection
 - `_DEFAULT_CONFIDENCE = 0.6` - Default detection threshold (overridden by `data/settings.json` if present)
 - `_DEFAULT_LABEL = "bottle"` - Default target object label (overridden by `data/settings.json` if present)
 - `LOCAL_TIMEZONE = 'America/Montreal'` - Timestamp timezone
 
 In `capture.py`:
+
 - `VIDEO_STREAM_PORT = 4912` - Video runner Socket.IO port
+- `VIDEO_WS_HOST = "ei-video-obj-detection-runner"` - Video runner Docker hostname
 - `MODEL_INPUT_SIZE = 416` - YOLO input dimensions for bbox scaling
 
 In `persistence.py`:
+
 - `MAX_DETECTION_IMAGES = 40` - Max saved detection images before rotation
 - `SETTINGS_SAVE_DEBOUNCE = 3` - Seconds to wait before writing settings to disk (coalesces rapid changes)
 - Detection images saved to `assets/images/` (served by WebUI)
@@ -81,6 +88,7 @@ In `persistence.py`:
 ### WebSocket Events (Frontend <-> Backend)
 
 **Backend to Frontend:**
+
 - `detection_saved` - New detection captured with image
 - `history_list` - Full detection history array
 - `labels` - Available detection labels and current selection
@@ -88,6 +96,7 @@ In `persistence.py`:
 - `image_data` - Single detection record by index
 
 **Frontend to Backend:**
+
 - `override_th` - Change detection confidence threshold
 - `override_label` - Change target detection label
 - `request_labels`, `request_history`, `request_threshold`, `request_image` - Data requests
@@ -107,6 +116,7 @@ The app runs as two Docker containers managed by Arduino App Lab:
 ### Video Runner Recovery
 
 The video runner can get stuck in a crash loop (GStreamer failures). When this happens:
+
 - Container shows as `(unhealthy)` in `docker ps`
 - WebSocket connections fail with "did not receive a valid HTTP response"
 - The `VideoObjectDetection` brick fails to connect
@@ -121,12 +131,14 @@ The video runner can get stuck in a crash loop (GStreamer failures). When this h
 
 The video runner has a built-in healthcheck (pings port 4912 every 2s, 25 retries). After ~50 seconds of failures, it's marked unhealthy and the cron job restarts it. The main app's Socket.IO reconnection logic (`capture.py`) automatically reconnects once the container recovers.
 
-**Manual recovery**:
+**Manual recovery:**
+
 ```bash
 docker restart detect-objects-on-camera-modified-ei-video-obj-detection-runner-1
 ```
 
-**Check restart log**:
+**Check restart log:**
+
 ```bash
 cat /tmp/video_restart.log
 ```
