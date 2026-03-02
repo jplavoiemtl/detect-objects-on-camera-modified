@@ -22,9 +22,8 @@ void setLedState(bool state) {
   // LED active LOW : true = ON -> LOW, false = OFF -> HIGH
   digitalWrite(ledPin, state ? LOW : HIGH);
 
-  Monitor.print("[C++] setLedState(");
-  Monitor.print(state ? "true" : "false");
-  Monitor.println(")");
+  Monitor.println(state ? "[C++] setLedState(true)" : "[C++] setLedState(false)");
+  Monitor.flush();
 }
 
 void matrixClear() {
@@ -78,6 +77,7 @@ void updateAnimation() {
 void playAnimation() {
   startAnimation(PersonFrames, PersonFramesCount, 50, 500);
   Monitor.println("[C++] Animation started");
+  Monitor.flush();
 }
 
 void setup() {
