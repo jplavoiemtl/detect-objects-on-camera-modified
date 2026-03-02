@@ -122,15 +122,22 @@ The video runner can get stuck in a crash loop (GStreamer failures). When this h
 - WebSocket connections fail with "did not receive a valid HTTP response"
 - The `VideoObjectDetection` brick fails to connect
 
-**Automatic recovery via host cron job**: The main app container is sandboxed and cannot restart sibling containers. Instead, a cron job runs on the Arduino UNO Q host every 2 minutes to check for unhealthy containers and restart them:
+**Automatic recovery via host cron job**: The main app container is sandboxed and cannot restart sibling containers. Instead, a cron job runs on the Arduino UNO Q host every 2 minutes to verify the video runner is listening on port 4912 and restarts it if not:
 
 ```bash
 # Installed on host via: ssh arduino@arduino-q.local
 # View with: crontab -l
-*/2 * * * * docker ps --filter "name=detect-objects-on-camera-modified-ei-video-obj-detection-runner-1" --filter "health=unhealthy" -q | grep -q . && docker restart detect-objects-on-camera-modified-ei-video-obj-detection-runner-1 >> /tmp/video_restart.log 2>&1
+*/2 * * * * docker exec detect-objects-on-camera-modified-ei-video-obj-detection-runner-1 netstat -tuln | grep -q :4912 || docker restart detect-objects-on-camera-modified-ei-video-obj-detection-runner-1 >> /tmp/video_restart.log 2>&1
 ```
 
-The video runner has a built-in healthcheck (pings port 4912 every 2s, 25 retries). After ~50 seconds of failures, it's marked unhealthy and the cron job restarts it. The main app's Socket.IO reconnection logic (`capture.py`) automatically reconnects once the container recovers.
+**Note**: The container's built-in Docker healthcheck (`netstat -tuln | grep :5050`) is broken — it checks port 5050 (TCP camera input, not a persistent listener) instead of port 4912 (the actual service port). This causes the container to always show as `(unhealthy)` despite working correctly. The cron job above uses the correct port check and does not rely on Docker's health status. The main app's Socket.IO reconnection logic (`capture.py`) automatically reconnects once the container recovers.
+
+To install/replace the cron job:
+
+```bash
+crontab -r
+(crontab -l 2>/dev/null; echo '*/2 * * * * docker exec detect-objects-on-camera-modified-ei-video-obj-detection-runner-1 netstat -tuln | grep -q :4912 || docker restart detect-objects-on-camera-modified-ei-video-obj-detection-runner-1 >> /tmp/video_restart.log 2>&1') | crontab -
+```
 
 **Manual recovery:**
 
