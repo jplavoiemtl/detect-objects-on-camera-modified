@@ -5,6 +5,11 @@ const confidenceValue = document.getElementById('confidenceValue');
 const labelSelect = document.getElementById('labelSelect');
 const DEFAULT_CONFIDENCE = 0.6;
 
+// Stream health elements
+const streamHealth = document.getElementById('stream-health');
+const healthDot = document.getElementById('healthDot');
+const healthText = document.getElementById('healthText');
+
 // Navigation elements
 const btnLive = document.getElementById('btnLive');
 const btnLatest = document.getElementById('btnLatest');
@@ -285,6 +290,9 @@ function initSocketIO() {
 
     // New detection saved
     socket.on('detection_saved', handleDetectionSaved);
+
+    // Stream health updates
+    socket.on('stream_health', handleStreamHealth);
 }
 
 function handleThreshold(payload) {
@@ -368,6 +376,45 @@ function initLiveDateTime() {
         update();
         setInterval(update, 60 * 1000);
     }, msToNextMinute);
+}
+
+function handleStreamHealth(payload) {
+    // Support wrapped payload
+    const data = payload?.connected !== undefined ? payload : (payload?.message || {});
+    if (data.connected === undefined) return;
+
+    const container = document.getElementById('stream-health');
+    if (container) container.style.display = 'flex';
+
+    // Determine health status
+    let status = 'good';
+    let label = `${data.fps} fps`;
+
+    if (!data.connected) {
+        status = 'bad';
+        label = 'disconnected';
+    } else if (data.disconnects > 0) {
+        status = 'bad';
+        label = `${data.fps} fps / ${data.disconnects} drop${data.disconnects > 1 ? 's' : ''}`;
+    } else if (data.max_gap > 2.0) {
+        status = 'degraded';
+        label = `${data.fps} fps / gap ${data.max_gap}s`;
+    } else if (data.fps > 0 && data.fps < 5) {
+        status = 'degraded';
+        label = `${data.fps} fps (low)`;
+    }
+
+    if (healthDot) {
+        healthDot.className = 'health-dot ' + status;
+    }
+    if (healthText) {
+        healthText.textContent = label;
+    }
+
+    // Log significant events to console for diagnostics
+    if (status !== 'good') {
+        console.log('[STREAM]', JSON.stringify(data));
+    }
 }
 
 function formatDateTimeForDisplay(date) {

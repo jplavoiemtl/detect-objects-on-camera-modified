@@ -36,6 +36,7 @@ from persistence import (
 )
 from capture import (
     capture_and_save_detection,
+    get_stream_health,
     start_capture_reconnect_daemon,
 )
 from health_monitor import mark_progress, start_health_monitor
@@ -43,12 +44,14 @@ from ui_handlers import (
     emit_detected_labels,
     emit_detection_saved,
     emit_history_list,
+    emit_stream_health,
     emit_threshold,
     handle_confidence_override,
     handle_history_request,
     handle_image_request,
     handle_label_override,
     handle_labels_request,
+    handle_stream_health_request,
     handle_threshold_request,
 )
 
@@ -63,8 +66,8 @@ mqtt_connect_with_retry()
 def heartbeat():
     while True:
         current_time = time.time()
-        detection_age = current_time - last_detection_time
-        status = "active" if detection_age <= WATCHDOG_THRESHOLD else "idle"
+        detection_age = (current_time - last_detection_time) if last_detection_time > 0 else None
+        status = "active" if detection_age is not None and detection_age <= WATCHDOG_THRESHOLD else "idle"
 
         timestamp_str = datetime.now(LOCAL_TIMEZONE).strftime("%d %b %Y, %H:%M:%S")
 
@@ -74,12 +77,13 @@ def heartbeat():
                 "device": CLIENT_ID,
                 "status": status,  # active = recent detection; idle = no detection recently
                 "timestamp": int(current_time),
-                "last_detection_ts": int(last_detection_time),
-                "last_detection_age": int(detection_age)
+                "last_detection_ts": int(last_detection_time) if last_detection_time > 0 else None,
+                "last_detection_age": int(detection_age) if detection_age is not None else None,
             }),
             retain=True
         )
-        print(f"{timestamp_str} [HEARTBEAT] status={status} last_detection_age={int(detection_age)}s payload_topic={STATUS_TOPIC}")
+        age_str = f"{int(detection_age)}s" if detection_age is not None else "never"
+        print(f"{timestamp_str} [HEARTBEAT] status={status} last_detection_age={age_str} payload_topic={STATUS_TOPIC}")
         mark_progress("heartbeat")
         time.sleep(60)
 
@@ -123,6 +127,24 @@ WATCHDOG_THRESHOLD = 90  # Seconds since last detection to consider the system i
 threading.Thread(target=heartbeat, daemon=True).start()
 start_health_monitor()
 start_capture_reconnect_daemon()
+
+# ================= STREAM HEALTH BROADCAST =================
+STREAM_HEALTH_INTERVAL = 10  # seconds between health broadcasts
+
+def stream_health_loop():
+    """Periodically broadcast stream health stats to the UI and log significant issues."""
+    while True:
+        time.sleep(STREAM_HEALTH_INTERVAL)
+        health = get_stream_health()
+        emit_stream_health(ui, health)
+
+        # Log to console when there are issues worth noting
+        if health["disconnects"] > 0:
+            print(f"[STREAM] disconnects={health['disconnects']} fps={health['fps']} max_gap={health['max_gap']}s uptime={health['uptime']}s")
+        elif health["connected"] and health["fps"] == 0 and health["frame_age"] is not None and health["frame_age"] > 5:
+            print(f"[STREAM] No frames received (age={health['frame_age']}s, connected={health['connected']})")
+
+threading.Thread(target=stream_health_loop, daemon=True).start()
 
 
 def set_led(state: bool):
@@ -309,6 +331,12 @@ ui.on_message(
 ui.on_message(
     "request_image",
     lambda sid, val: handle_image_request(ui, detection_history, sid, val),
+)
+ui.on_message(
+    "request_stream_health",
+    lambda sid, val: handle_stream_health_request(
+        lambda: emit_stream_health(ui, get_stream_health()), sid, val
+    ),
 )
 emit_detected_labels(ui, detected_labels, DETECTION_LABEL)
 

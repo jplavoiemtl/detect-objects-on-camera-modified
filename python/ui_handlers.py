@@ -46,6 +46,19 @@ def emit_detected_labels(ui, detected_labels: Set[str], detection_label: str):
         print(f"[UI] Failed to emit labels: {e}")
 
 
+def emit_stream_health(ui, health: dict):
+    """Broadcast stream health stats to the UI."""
+    try:
+        ui.send_message("stream_health", message=health)
+    except Exception as e:
+        print(f"[UI] Failed to emit stream_health: {e}")
+
+
+def handle_stream_health_request(emit_health_fn, _sid, _value):
+    """Send current stream health to requesting client."""
+    emit_health_fn()
+
+
 def handle_confidence_override(detection_stream, set_confidence, _sid, value):
     """Handle confidence override messages from the Web UI."""
     try:

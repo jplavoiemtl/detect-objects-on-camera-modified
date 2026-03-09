@@ -296,6 +296,48 @@ body {
     letter-spacing: 0.02em;
 }
 
+/* Stream health indicator */
+.stream-health {
+    position: absolute;
+    top: 64px;
+    right: 12px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(36, 36, 36, 0.85);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    padding: 4px 10px;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    font-size: 0.75rem;
+    color: #8b949e;
+    z-index: 10;
+}
+
+.health-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #484f58;
+}
+
+.health-dot.good {
+    background: #3fb950;
+}
+
+.health-dot.degraded {
+    background: #d29922;
+}
+
+.health-dot.bad {
+    background: #f85149;
+}
+
+.health-text {
+    font-variant-numeric: tabular-nums;
+}
+
 /* Saved image wrapper (matches iframe dimensions) */
 #saved-image-wrapper {
     display: none;

@@ -63,6 +63,16 @@ _stale_watchdog_started = False
 _connect_lock = threading.Lock()
 _connection_attempt_count = 0  # Track attempts for log throttling
 
+# Stream health stats (diagnostic counters)
+_stats_lock = threading.Lock()
+_frames_received = 0          # Total frames since last stats reset
+_stats_window_start = 0.0     # When the current stats window started
+_last_frame_gap = 0.0         # Longest gap between consecutive frames in window
+_prev_frame_time = 0.0        # Time of previous frame (for gap calc)
+_disconnects_in_window = 0    # Disconnect count in current window
+_last_disconnect_time = 0.0   # Timestamp of last disconnect
+_connection_uptime_start = 0.0  # When the current connection session started
+
 # Connection URL
 _video_url = f"http://{VIDEO_WS_HOST}:{VIDEO_STREAM_PORT}"
 
@@ -95,9 +105,22 @@ def _setup_socketio():
 
         @_sio_client.event
         def connect():
-            global _sio_connected
+            global _sio_connected, _connection_uptime_start
             _sio_connected = True
-            print("[CAPTURE] ✓ Socket.IO connected to video stream")
+            _connection_uptime_start = time.time()
+            # Log transport and ping settings for diagnostics
+            transport = "unknown"
+            ping_info = ""
+            try:
+                transport = _sio_client.transport()
+            except Exception:
+                pass
+            try:
+                eio = _sio_client.eio
+                ping_info = f" ping_interval={eio.ping_interval}s ping_timeout={eio.ping_timeout}s"
+            except Exception:
+                pass
+            print(f"[CAPTURE] ✓ Socket.IO connected to video stream (transport={transport}{ping_info})")
             # Try to wake up the stream if it's passive
             try:
                 _sio_client.emit('start')
@@ -107,8 +130,16 @@ def _setup_socketio():
 
         @_sio_client.event
         def disconnect():
-            global _sio_connected
+            global _sio_connected, _disconnects_in_window, _last_disconnect_time
+            was_connected = _sio_connected
             _sio_connected = False
+            now = time.time()
+            with _stats_lock:
+                _disconnects_in_window += 1
+                _last_disconnect_time = now
+            if was_connected:
+                uptime = now - _connection_uptime_start if _connection_uptime_start > 0 else 0
+                print(f"[CAPTURE] ✗ Socket.IO disconnected (was connected {uptime:.1f}s)")
 
         @_sio_client.on("*")
         def catch_all(event, *args):
@@ -135,12 +166,20 @@ def _setup_socketio():
 
 def _process_frame_data(data):
     """Process incoming frame data from Socket.IO."""
-    global _latest_frame, _latest_frame_time
+    global _latest_frame, _latest_frame_time, _frames_received, _last_frame_gap, _prev_frame_time
     try:
         # If data is already a numpy array (e.g. from a brick directly)
         if isinstance(data, np.ndarray):
+            now = time.time()
             _latest_frame = data.copy()
-            _latest_frame_time = time.time()
+            _latest_frame_time = now
+            with _stats_lock:
+                _frames_received += 1
+                if _prev_frame_time > 0:
+                    gap = now - _prev_frame_time
+                    if gap > _last_frame_gap:
+                        _last_frame_gap = gap
+                _prev_frame_time = now
             return
 
         # data might be the dict or the raw base64 string
@@ -166,8 +205,16 @@ def _process_frame_data(data):
         frame = cv2.imdecode(np.frombuffer(img_bytes, np.uint8), cv2.IMREAD_COLOR)
         
         if frame is not None:
+            now = time.time()
             _latest_frame = frame
-            _latest_frame_time = time.time()
+            _latest_frame_time = now
+            with _stats_lock:
+                _frames_received += 1
+                if _prev_frame_time > 0:
+                    gap = now - _prev_frame_time
+                    if gap > _last_frame_gap:
+                        _last_frame_gap = gap
+                _prev_frame_time = now
     except Exception:
         pass
 
@@ -386,10 +433,11 @@ def _stale_watchdog_loop():
 
 def start_capture_reconnect_daemon(reconnect_interval: float = 5.0):
     """Start background reconnect attempts to keep the video stream alive."""
-    global _reconnect_interval, _reconnector_started, _stale_watchdog_started
+    global _reconnect_interval, _reconnector_started, _stale_watchdog_started, _stats_window_start
     if _reconnector_started:
         return
     _reconnector_started = True
+    _stats_window_start = time.time()
     _reconnect_interval = max(1.0, reconnect_interval)
     threading.Thread(target=_reconnect_loop, daemon=True).start()
     if not _stale_watchdog_started:
@@ -473,6 +521,44 @@ def scale_bbox_to_frame(
         return None
 
     return [x1, y1, x2, y2]
+
+
+def get_stream_health():
+    """Return a snapshot of stream health stats and reset the window.
+
+    Returns a dict with:
+      - connected: bool
+      - fps: frames per second over the stats window
+      - max_gap: longest gap (seconds) between frames in the window
+      - disconnects: number of disconnects in the window
+      - frame_age: seconds since last frame (or None)
+      - uptime: seconds since current connection started (or 0)
+    """
+    global _frames_received, _stats_window_start, _last_frame_gap, _disconnects_in_window
+
+    now = time.time()
+    with _stats_lock:
+        window = now - _stats_window_start if _stats_window_start > 0 else 0
+        fps = _frames_received / window if window > 1 else 0
+        max_gap = _last_frame_gap
+        disconnects = _disconnects_in_window
+        frame_age = (now - _latest_frame_time) if _latest_frame_time > 0 else None
+        uptime = (now - _connection_uptime_start) if _connection_uptime_start > 0 and _sio_connected else 0
+
+        # Reset window
+        _frames_received = 0
+        _stats_window_start = now
+        _last_frame_gap = 0.0
+        _disconnects_in_window = 0
+
+    return {
+        "connected": _sio_connected,
+        "fps": round(fps, 1),
+        "max_gap": round(max_gap, 2),
+        "disconnects": disconnects,
+        "frame_age": round(frame_age, 1) if frame_age is not None else None,
+        "uptime": round(uptime, 0),
+    }
 
 
 def capture_and_save_detection(
