@@ -561,6 +561,13 @@ def get_stream_health():
     }
 
 
+def get_stream_status():
+    """Return basic stream status without resetting stats."""
+    now = time.time()
+    frame_age = round(now - _latest_frame_time, 1) if _latest_frame_time > 0 else None
+    return {"connected": _sio_connected, "frame_age": frame_age}
+
+
 def capture_and_save_detection(
     label: str,
     confidence: float,

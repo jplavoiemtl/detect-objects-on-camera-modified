@@ -37,6 +37,7 @@ from persistence import (
 from capture import (
     capture_and_save_detection,
     get_stream_health,
+    get_stream_status,
     start_capture_reconnect_daemon,
 )
 from health_monitor import mark_progress, start_health_monitor
@@ -83,7 +84,10 @@ def heartbeat():
             retain=True
         )
         age_str = f"{int(detection_age)}s" if detection_age is not None else "never"
-        print(f"{timestamp_str} [HEARTBEAT] status={status} last_detection_age={age_str} payload_topic={STATUS_TOPIC}")
+        stream = get_stream_status()
+        stream_str = f"frame_age={stream['frame_age']}s" if stream["frame_age"] is not None else "no_frames"
+        stream_str = f"{stream_str} stream={'connected' if stream['connected'] else 'disconnected'}"
+        print(f"{timestamp_str} [HEARTBEAT] status={status} last_detection_age={age_str} {stream_str}")
         mark_progress("heartbeat")
         time.sleep(60)
 
