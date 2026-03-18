@@ -590,6 +590,7 @@ if (savedImageWrapper && savedImage) {
     savedImageWrapper.addEventListener('pointerup', onPointerUp);
     savedImageWrapper.addEventListener('pointercancel', onPointerUp);
     savedImageWrapper.addEventListener('pointerleave', onPointerUp);
+    savedImageWrapper.addEventListener('wheel', onWheel, {passive: false});
 }
 
 if (liveOverlay) {
@@ -598,6 +599,7 @@ if (liveOverlay) {
     liveOverlay.addEventListener('pointerup', onPointerUp);
     liveOverlay.addEventListener('pointercancel', onPointerUp);
     liveOverlay.addEventListener('pointerleave', onPointerUp);
+    liveOverlay.addEventListener('wheel', onWheel, {passive: false});
 }
 
 function resetTransform() {
@@ -610,6 +612,29 @@ function applyTransform() {
         videoFeedContainer.style.setProperty('--pan-x', `${transform.x}px`);
         videoFeedContainer.style.setProperty('--pan-y', `${transform.y}px`);
         videoFeedContainer.style.setProperty('--zoom-scale', transform.scale);
+    }
+}
+
+
+function onWheel(e) {
+    e.preventDefault(); // Stop page from scrolling
+    
+    const zoomSensitivity = 1.1;
+    let newScale = transform.scale;
+    
+    if (e.deltaY < 0) {
+        newScale *= zoomSensitivity;
+    } else {
+        newScale /= zoomSensitivity;
+    }
+    
+    newScale = Math.max(1, Math.min(newScale, 5));
+    transform.scale = newScale;
+    
+    if (transform.scale <= 1) {
+        resetTransform();
+    } else {
+        applyTransform();
     }
 }
 
