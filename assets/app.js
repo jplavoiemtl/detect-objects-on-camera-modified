@@ -571,27 +571,33 @@ function showToast(message) {
 
 
 // --- DSR: Step 4 Touch Gestures & Custom Zoom ---
-// Variables for pinch & pan
 let transform = { x: 0, y: 0, scale: 1 };
 let pointers = [];
 let startScale = 1;
 let startDistance = 0;
 let isPanning = false;
 
-// Variables for swipe
 let touchStartX = 0;
 let touchEndX = 0;
 let swipePossible = true; 
 
+const liveOverlay = document.getElementById('live-overlay');
+
 if (savedImageWrapper && savedImage) {
     savedImageWrapper.style.touchAction = 'none';
-    savedImage.style.transformOrigin = 'center center';
-    
     savedImageWrapper.addEventListener('pointerdown', onPointerDown);
     savedImageWrapper.addEventListener('pointermove', onPointerMove);
     savedImageWrapper.addEventListener('pointerup', onPointerUp);
     savedImageWrapper.addEventListener('pointercancel', onPointerUp);
     savedImageWrapper.addEventListener('pointerleave', onPointerUp);
+}
+
+if (liveOverlay) {
+    liveOverlay.addEventListener('pointerdown', onPointerDown);
+    liveOverlay.addEventListener('pointermove', onPointerMove);
+    liveOverlay.addEventListener('pointerup', onPointerUp);
+    liveOverlay.addEventListener('pointercancel', onPointerUp);
+    liveOverlay.addEventListener('pointerleave', onPointerUp);
 }
 
 function resetTransform() {
@@ -600,8 +606,11 @@ function resetTransform() {
 }
 
 function applyTransform() {
-    if (!savedImage) return;
-    savedImage.style.transform = `translate(${transform.x}px, ${transform.y}px) scale(${transform.scale})`;
+    if (videoFeedContainer) {
+        videoFeedContainer.style.setProperty('--pan-x', `${transform.x}px`);
+        videoFeedContainer.style.setProperty('--pan-y', `${transform.y}px`);
+        videoFeedContainer.style.setProperty('--zoom-scale', transform.scale);
+    }
 }
 
 function getDistance(p1, p2) {
@@ -630,14 +639,13 @@ function onPointerMove(e) {
     if (index !== -1) pointers[index] = e;
 
     if (pointers.length === 1 && isPanning) {
-        // We use movementX/Y for pan
         transform.x += (e.movementX || 0);
         transform.y += (e.movementY || 0);
         applyTransform();
     } else if (pointers.length === 2) {
         const currentDistance = getDistance(pointers[0], pointers[1]);
         let newScale = startScale * (currentDistance / startDistance);
-        newScale = Math.max(1, Math.min(newScale, 5)); // restrict zoom 1x-5x
+        newScale = Math.max(1, Math.min(newScale, 5)); 
         transform.scale = newScale;
         applyTransform();
     }
@@ -670,9 +678,14 @@ function handleSwipe() {
     else if (touchEndX > touchStartX + swipeThreshold) goBack();
 }
 
-// Rest transform when image changes
 const origShowImage = showHistoryImage;
 showHistoryImage = function() {
     if (typeof resetTransform === 'function') resetTransform();
     origShowImage();
+};
+
+const origSetLiveMode = setLiveMode;
+setLiveMode = function() {
+    if (typeof resetTransform === 'function') resetTransform();
+    origSetLiveMode();
 };

@@ -93,7 +93,7 @@ body {
     box-shadow: 0 4px 24px rgba(0, 0, 0, 0.6);
 
     /* Scale up the entire wrapper and its contents to ~800x600 */
-    transform: scale(var(--video-scale));
+    transform: translate3d(var(--pan-x, 0px), var(--pan-y, 0px), 0) scale(calc(var(--video-scale) * var(--zoom-scale, 1)));
     transform-origin: center center;
 }
 
@@ -127,7 +127,7 @@ body {
     border-radius: 8px;
 
     /* Scale placeholder to match video size */
-    transform: scale(var(--video-scale));
+    transform: translate3d(var(--pan-x, 0px), var(--pan-y, 0px), 0) scale(calc(var(--video-scale) * var(--zoom-scale, 1)));
     transform-origin: center center;
 }
 
@@ -371,7 +371,7 @@ body {
     box-shadow: 0 4px 24px rgba(0, 0, 0, 0.6);
 
     /* Scale up to match live video size */
-    transform: scale(var(--video-scale));
+    transform: translate3d(var(--pan-x, 0px), var(--pan-y, 0px), 0) scale(calc(var(--video-scale) * var(--zoom-scale, 1)));
     transform-origin: center center;
 }
 
@@ -396,17 +396,17 @@ body {
 
     #iframe-wrapper {
         /* Reduce scale on smaller screens */
-        transform: scale(var(--video-scale));
+        transform: translate3d(var(--pan-x, 0px), var(--pan-y, 0px), 0) scale(calc(var(--video-scale) * var(--zoom-scale, 1)));
         border-radius: 0;
     }
 
     .camera-status {
-        transform: scale(var(--video-scale));
+        transform: translate3d(var(--pan-x, 0px), var(--pan-y, 0px), 0) scale(calc(var(--video-scale) * var(--zoom-scale, 1)));
         border-radius: 0;
     }
 
     #saved-image-wrapper {
-        transform: scale(var(--video-scale));
+        transform: translate3d(var(--pan-x, 0px), var(--pan-y, 0px), 0) scale(calc(var(--video-scale) * var(--zoom-scale, 1)));
         border-radius: 0;
     }
 
