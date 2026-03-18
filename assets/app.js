@@ -26,6 +26,13 @@ const savedImageWrapper = document.getElementById('saved-image-wrapper');
 const savedImage = document.getElementById('savedImage');
 const liveDateTime = document.getElementById('liveDateTime');
 
+// New interaction elements
+const btnFullscreen = document.getElementById('btnFullscreen');
+const btnDownload = document.getElementById('btnDownload');
+const btnShare = document.getElementById('btnShare');
+const toastContainer = document.getElementById('toast-container');
+const videoFeedContainer = document.getElementById('videoFeedContainer');
+
 // History state
 let viewMode = 'live'; // 'live' | 'history'
 let historyIndex = -1; // Current position in history (0 = oldest, length-1 = newest)
@@ -43,10 +50,16 @@ function initControls() {
     updateConfidenceDisplay(confidenceSlider?.value ?? DEFAULT_CONFIDENCE);
 
     if (confidenceSlider) {
-        confidenceSlider.addEventListener('change', () => {
+        confidenceSlider.addEventListener('input', () => {
             const value = parseFloat(confidenceSlider.value);
             if (Number.isFinite(value)) {
                 updateConfidenceDisplay(value);
+            }
+        });
+
+        confidenceSlider.addEventListener('change', () => {
+            const value = parseFloat(confidenceSlider.value);
+            if (Number.isFinite(value)) {
                 socket.emit('override_th', value);
             }
         });
@@ -77,6 +90,21 @@ function initNavigation() {
     }
     if (btnForward) {
         btnForward.addEventListener('click', () => goForward());
+    }
+    
+    if (btnFullscreen) {
+        btnFullscreen.addEventListener('click', toggleFullscreen);
+    }
+    if (btnDownload) {
+        btnDownload.addEventListener('click', downloadCurrentDetection);
+    }
+    if (btnShare) {
+        // Hide share if not supported
+        if (!navigator.share) {
+            btnShare.style.display = 'none';
+        } else {
+            btnShare.addEventListener('click', shareCurrentDetection);
+        }
     }
 }
 
@@ -348,6 +376,11 @@ function handleDetectionSaved(payload) {
             // Stay in live mode but surface the newest detection info
             showDetectionInfo(data.entry);
         } else {
+            // Toast notification if looking at older history
+            if (historyIndex < detectionHistory.length - 1) {
+                const confPercent = data.entry.confidence ? Math.round(data.entry.confidence * 100) : '--';
+                showToast(`New detection: ${data.entry.label} (${confPercent}%)`);
+            }
             // ALWAYS jump to the newest detection if we are in history mode
             historyIndex = detectionHistory.length - 1;
             showHistoryImage();
@@ -426,4 +459,140 @@ function formatDateTimeForDisplay(date) {
     const minutes = String(date.getMinutes()).padStart(2, '0');
 
     return `${day} ${month} ${year}, ${hours}:${minutes}`;
+}
+
+// --- DSR: Step 3 Interactive Features ---
+function toggleFullscreen() {
+    if (!document.fullscreenElement) {
+        if (videoFeedContainer.requestFullscreen) {
+            videoFeedContainer.requestFullscreen();
+        } else if (videoFeedContainer.webkitRequestFullscreen) {
+            videoFeedContainer.webkitRequestFullscreen();
+        }
+    } else {
+        if (document.exitFullscreen) {
+            document.exitFullscreen();
+        } else if (document.webkitExitFullscreen) {
+            document.webkitExitFullscreen();
+        }
+    }
+}
+
+async function downloadCurrentDetection() {
+    if (historyIndex < 0 || historyIndex >= detectionHistory.length) return;
+    const entry = detectionHistory[historyIndex];
+    if (entry && entry.filename) {
+        try {
+            const response = await fetch(`/images/${entry.filename}`);
+            const blob = await response.blob();
+            
+            const file = new File([blob], entry.filename, { type: blob.type || 'image/jpeg' });
+            if (navigator.canShare && navigator.canShare({ files: [file] })) {
+                await navigator.share({
+                    files: [file]
+                });
+            } else {
+                const link = document.createElement('a');
+                const objectUrl = URL.createObjectURL(blob);
+                link.href = objectUrl;
+                link.download = entry.filename;
+                document.body.appendChild(link);
+                link.click();
+                setTimeout(() => {
+                    document.body.removeChild(link);
+                    URL.revokeObjectURL(objectUrl);
+                }, 100);
+            }
+        } catch (err) {
+            console.error('Download error:', err);
+            const link = document.createElement('a');
+            link.href = `/images/${entry.filename}`;
+            link.download = entry.filename;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+    }
+}
+
+async function shareCurrentDetection() {
+    if (historyIndex < 0 || historyIndex >= detectionHistory.length) return;
+    const entry = detectionHistory[historyIndex];
+    if (entry && entry.filename && navigator.share) {
+        try {
+            const url = `${window.location.origin}/images/${entry.filename}`;
+            await navigator.share({
+                title: 'Object Detection',
+                text: `Detected ${entry.label || 'object'}`,
+                url: url
+            });
+        } catch (err) {
+            console.error('Error sharing:', err);
+        }
+    }
+}
+
+function showToast(message) {
+    if (!toastContainer) return;
+    const toast = document.createElement('div');
+    toast.className = 'toast';
+    toast.textContent = message;
+    
+    toast.style.background = 'var(--bg-surface)';
+    toast.style.color = 'var(--text-primary)';
+    toast.style.padding = '12px 16px';
+    toast.style.borderRadius = '8px';
+    toast.style.boxShadow = 'var(--shadow-soft)';
+    toast.style.border = '1px solid var(--accent-primary)';
+    toast.style.opacity = '0';
+    toast.style.transform = 'translateY(-20px)';
+    toast.style.transition = 'opacity 0.3s, transform 0.3s';
+    toast.style.fontSize = '0.9rem';
+    toast.style.backdropFilter = 'blur(8px)';
+    toast.style.webkitBackdropFilter = 'blur(8px)';
+    
+    toastContainer.appendChild(toast);
+    
+    requestAnimationFrame(() => {
+        toast.style.opacity = '1';
+        toast.style.transform = 'translateY(0)';
+    });
+    
+    setTimeout(() => {
+        toast.style.opacity = '0';
+        toast.style.transform = 'translateY(-20px)';
+        setTimeout(() => {
+            if (toastContainer.contains(toast)) {
+                toastContainer.removeChild(toast);
+            }
+        }, 300);
+    }, 4000);
+}
+
+
+// --- DSR: Step 4 Touch Gestures ---
+let touchStartX = 0;
+let touchEndX = 0;
+
+if (savedImageWrapper) {
+    savedImageWrapper.addEventListener('touchstart', e => {
+        touchStartX = e.changedTouches[0].screenX;
+    }, {passive: true});
+
+    savedImageWrapper.addEventListener('touchend', e => {
+        touchEndX = e.changedTouches[0].screenX;
+        handleSwipe();
+    }, {passive: true});
+}
+
+function handleSwipe() {
+    const swipeThreshold = 50;
+    if (touchEndX < touchStartX - swipeThreshold) {
+        // Swiped left -> Go Forward
+        goForward();
+    }
+    if (touchEndX > touchStartX + swipeThreshold) {
+        // Swiped right -> Go Back
+        goBack();
+    }
 }

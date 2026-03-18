@@ -4,10 +4,15 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Video Object Detection Arduino Q</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
     <link rel="stylesheet" type="text/css" href="style.css">
 </head>
 <body>
-    <!-- Top controls: Detection settings -->
+    <div id="app-container">
+        <aside id="sidebar">
+            <!-- Top controls: Detection settings -->
     <div id="controls-top">
         <label for="confidenceSlider">Detection confidence</label>
         <div class="slider-row">
@@ -22,11 +27,26 @@
     <!-- Bottom controls: Navigation and detection info -->
     <div id="controls-bottom">
         <div class="nav-row">
-            <button id="btnOldest" class="nav-btn" title="Oldest detection" disabled>&laquo; Oldest</button>
-            <button id="btnBack" class="nav-btn" title="Previous detection" disabled>&larr; Back</button>
-            <button id="btnLive" class="nav-btn active" title="Live view">Live</button>
-            <button id="btnForward" class="nav-btn" title="Next detection" disabled>Forward &rarr;</button>
-            <button id="btnLatest" class="nav-btn" title="Latest detection">Latest &raquo;</button>
+            <button id="btnOldest" class="nav-btn" title="Oldest detection" disabled>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m11 17-5-5 5-5"/><path d="m18 17-5-5 5-5"/></svg>
+                Oldest
+            </button>
+            <button id="btnBack" class="nav-btn" title="Previous detection" disabled>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+                Back
+            </button>
+            <button id="btnLive" class="nav-btn active" title="Live view">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/></svg>
+                Live
+            </button>
+            <button id="btnForward" class="nav-btn" title="Next detection" disabled>
+                Forward
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+            </button>
+            <button id="btnLatest" class="nav-btn" title="Latest detection">
+                Latest
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m13 17 5-5-5-5"/><path d="m6 17 5-5-5-5"/></svg>
+            </button>
             <span id="positionIndicator" class="position-indicator">Live</span>
         </div>
         <div id="detectionInfo" class="detection-info" style="display: none;">
@@ -36,8 +56,14 @@
         </div>
         <div id="liveDateTime" class="live-datetime" aria-live="polite">-- -- ----, --:--</div>
     </div>
+    <div id="stream-health" class="stream-health" style="display: none;">
+        <span id="healthDot" class="health-dot"></span>
+        <span id="healthText" class="health-text">--</span>
+    </div>
+    </aside>
+    <main id="main-content">
     <div id="video-container">
-        <div id="videoFeedContainer">
+        <div id="videoFeedContainer" style="position: relative;">
             <div id="videoPlaceholder" class="camera-status">
                 <img src="./img/no-face.svg" alt="Searching webcam">
                 <p class="feedback-text">Searching Webcam...</p>
@@ -47,16 +73,30 @@
                 <iframe id="dynamicIframe" title="Video stream"></iframe>
             </div>
             <!-- Saved detection image (shown when browsing history) -->
-            <div id="saved-image-wrapper" style="display: none;">
+            <div id="saved-image-wrapper" style="display: none; position: relative;">
                 <img id="savedImage" alt="Saved detection" />
+                <div class="image-actions" style="position: absolute; top: 10px; right: 10px; display: flex; gap: 8px;">
+                    <button id="btnDownload" class="icon-btn" title="Download image" style="background: rgba(0,0,0,0.6); border:none; padding:8px; border-radius:50%; color:white; cursor:pointer; display:flex; align-items:center; justify-content:center;">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                    </button>
+                    <button id="btnShare" class="icon-btn" title="Share image" style="background: rgba(0,0,0,0.6); border:none; padding:8px; border-radius:50%; color:white; cursor:pointer; display:flex; align-items:center; justify-content:center;">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+                    </button>
+                </div>
             </div>
+            
+            <button id="btnFullscreen" title="Toggle Fullscreen" style="position: absolute; bottom: 10px; right: 10px; z-index: 50; background: rgba(0,0,0,0.5); border:none; padding: 8px; border-radius: 4px; color: white; cursor: pointer;">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
+            </button>
         </div>
     </div>
-    <div id="stream-health" class="stream-health" style="display: none;">
-        <span id="healthDot" class="health-dot"></span>
-        <span id="healthText" class="health-text">--</span>
     </div>
     <div id="error-container" class="error-message" style="display: none;"></div>
+    </main>
+    </div>
+    
+    <!-- Toast notifications container -->
+    <div id="toast-container" style="position: fixed; top: 20px; right: 20px; z-index: 9999; display: flex; flex-direction: column; gap: 10px;"></div>
     
     <script>
         // Video stream loading (scoped to avoid conflicts with app.js)
