@@ -570,29 +570,109 @@ function showToast(message) {
 }
 
 
-// --- DSR: Step 4 Touch Gestures ---
+// --- DSR: Step 4 Touch Gestures & Custom Zoom ---
+// Variables for pinch & pan
+let transform = { x: 0, y: 0, scale: 1 };
+let pointers = [];
+let startScale = 1;
+let startDistance = 0;
+let isPanning = false;
+
+// Variables for swipe
 let touchStartX = 0;
 let touchEndX = 0;
+let swipePossible = true; 
 
-if (savedImageWrapper) {
-    savedImageWrapper.addEventListener('touchstart', e => {
-        touchStartX = e.changedTouches[0].screenX;
-    }, {passive: true});
+if (savedImageWrapper && savedImage) {
+    savedImageWrapper.style.touchAction = 'none';
+    savedImage.style.transformOrigin = 'center center';
+    
+    savedImageWrapper.addEventListener('pointerdown', onPointerDown);
+    savedImageWrapper.addEventListener('pointermove', onPointerMove);
+    savedImageWrapper.addEventListener('pointerup', onPointerUp);
+    savedImageWrapper.addEventListener('pointercancel', onPointerUp);
+    savedImageWrapper.addEventListener('pointerleave', onPointerUp);
+}
 
-    savedImageWrapper.addEventListener('touchend', e => {
-        touchEndX = e.changedTouches[0].screenX;
-        handleSwipe();
-    }, {passive: true});
+function resetTransform() {
+    transform = { x: 0, y: 0, scale: 1 };
+    applyTransform();
+}
+
+function applyTransform() {
+    if (!savedImage) return;
+    savedImage.style.transform = `translate(${transform.x}px, ${transform.y}px) scale(${transform.scale})`;
+}
+
+function getDistance(p1, p2) {
+    return Math.hypot(p1.clientX - p2.clientX, p1.clientY - p2.clientY);
+}
+
+function onPointerDown(e) {
+    e.preventDefault();
+    pointers.push(e);
+
+    if (pointers.length === 1) {
+        isPanning = transform.scale > 1;
+        swipePossible = transform.scale === 1;
+        touchStartX = e.clientX;
+    } else if (pointers.length === 2) {
+        isPanning = false;
+        swipePossible = false;
+        startDistance = getDistance(pointers[0], pointers[1]);
+        startScale = transform.scale;
+    }
+}
+
+function onPointerMove(e) {
+    e.preventDefault();
+    const index = pointers.findIndex(p => p.pointerId === e.pointerId);
+    if (index !== -1) pointers[index] = e;
+
+    if (pointers.length === 1 && isPanning) {
+        // We use movementX/Y for pan
+        transform.x += (e.movementX || 0);
+        transform.y += (e.movementY || 0);
+        applyTransform();
+    } else if (pointers.length === 2) {
+        const currentDistance = getDistance(pointers[0], pointers[1]);
+        let newScale = startScale * (currentDistance / startDistance);
+        newScale = Math.max(1, Math.min(newScale, 5)); // restrict zoom 1x-5x
+        transform.scale = newScale;
+        applyTransform();
+    }
+}
+
+function onPointerUp(e) {
+    e.preventDefault();
+    const index = pointers.findIndex(p => p.pointerId === e.pointerId);
+    if (index !== -1) {
+        if (pointers.length === 1 && swipePossible) {
+            touchEndX = e.clientX;
+            handleSwipe();
+        }
+        pointers.splice(index, 1);
+    }
+    
+    if (pointers.length === 0) {
+        if (transform.scale <= 1) {
+            resetTransform();
+        }
+    } else if (pointers.length === 1) {
+        isPanning = transform.scale > 1;
+    }
 }
 
 function handleSwipe() {
+    if (!swipePossible || transform.scale > 1) return;
     const swipeThreshold = 50;
-    if (touchEndX < touchStartX - swipeThreshold) {
-        // Swiped left -> Go Forward
-        goForward();
-    }
-    if (touchEndX > touchStartX + swipeThreshold) {
-        // Swiped right -> Go Back
-        goBack();
-    }
+    if (touchEndX < touchStartX - swipeThreshold) goForward();
+    else if (touchEndX > touchStartX + swipeThreshold) goBack();
 }
+
+// Rest transform when image changes
+const origShowImage = showHistoryImage;
+showHistoryImage = function() {
+    if (typeof resetTransform === 'function') resetTransform();
+    origShowImage();
+};
