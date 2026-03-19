@@ -225,12 +225,28 @@ function playDetectionVideo() {
     const entry = detectionHistory[historyIndex];
     if (!entry.video_filename || !detectionVideo) return;
 
+    // Build source paths: WebM for Chrome/Firefox, MP4 for Safari/iOS
+    const webmFile = entry.video_filename.replace('.mp4', '.webm');
+    const mp4File = entry.video_filename;
+
     // Hide image, show video
     if (savedImageWrapper) savedImageWrapper.style.display = 'none';
     if (btnPlayVideo) btnPlayVideo.style.display = 'none';
     if (imageActions) imageActions.style.display = 'none';
+
+    // Use <source> elements for dual-format support
+    detectionVideo.innerHTML = '';
+    const webmSource = document.createElement('source');
+    webmSource.src = `/videos/${webmFile}`;
+    webmSource.type = 'video/webm';
+    const mp4Source = document.createElement('source');
+    mp4Source.src = `/videos/${mp4File}`;
+    mp4Source.type = 'video/mp4';
+    detectionVideo.appendChild(webmSource);
+    detectionVideo.appendChild(mp4Source);
+
     detectionVideo.style.display = 'block';
-    detectionVideo.src = `/videos/${entry.video_filename}`;
+    detectionVideo.load();
     detectionVideo.play().catch(() => {
         showToast('Video not available');
         stopDetectionVideo();
@@ -240,9 +256,18 @@ function playDetectionVideo() {
 function stopDetectionVideo() {
     if (!detectionVideo) return;
     detectionVideo.pause();
+    detectionVideo.innerHTML = '';
     detectionVideo.removeAttribute('src');
     detectionVideo.load();
     detectionVideo.style.display = 'none';
+
+    // Restore image view if browsing history
+    if (viewMode === 'history' && historyIndex >= 0 && historyIndex < detectionHistory.length) {
+        if (savedImageWrapper) savedImageWrapper.style.display = 'block';
+        if (imageActions) imageActions.style.display = 'flex';
+        const entry = detectionHistory[historyIndex];
+        if (btnPlayVideo) btnPlayVideo.style.display = entry.video_filename ? 'flex' : 'none';
+    }
 }
 
 function showDetectionInfo(entry) {

@@ -1,9 +1,9 @@
-"""Video recorder — circular buffer + MP4 writer for detection clips.
+"""Video recorder — circular buffer + dual-format video writer for detection clips.
 
 Continuously buffers incoming JPEG frames. When a detection triggers
 recording, the pre-buffer is snapshotted and post-detection frames are
-collected for a few more seconds. The combined clip is written to an
-MP4 file using mp4v codec in a background thread.
+collected for a few more seconds. The combined clip is written in two
+formats (MP4 for Safari/iOS, WebM for Chrome/Firefox) in a background thread.
 """
 
 import collections
@@ -135,13 +135,17 @@ def _draw_overlay(frame, overlay):
     if not scaled:
         return
     x1, y1, x2, y2 = [int(c) for c in scaled]
-    cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+    cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2, cv2.LINE_AA)
     text = f"{label} {confidence:.0%}"
-    cv2.putText(frame, text, (x1, y1 - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+    cv2.putText(frame, text, (x1, y1 - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 255, 0), 2, cv2.LINE_AA)
 
 
 def _write_video(frames, filepath):
-    """Decode JPEG frames, draw overlays, and write to MP4 file. Runs in background thread."""
+    """Decode JPEG frames, draw overlays, and write dual-format video files.
+
+    Writes both MP4 (mp4v, for Safari/iOS) and WebM (VP8, for Chrome/Firefox).
+    Runs in a background thread.
+    """
     try:
         # Calculate actual FPS from timestamps
         duration = frames[-1][0] - frames[0][0]
@@ -157,30 +161,46 @@ def _write_video(frames, filepath):
             return
         h, w = first.shape[:2]
 
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        writer = cv2.VideoWriter(filepath, fourcc, fps, (w, h))
+        # Open both writers: MP4 for Safari/iOS, WebM for Chrome/Firefox
+        mp4_path = filepath  # .mp4
+        webm_path = filepath.replace(".mp4", ".webm")
 
-        if not writer.isOpened():
-            print(f"[VIDEO] Failed to open VideoWriter for {filepath}")
+        mp4_writer = cv2.VideoWriter(mp4_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (w, h))
+        webm_writer = cv2.VideoWriter(webm_path, cv2.VideoWriter_fourcc(*'VP80'), fps, (w, h))
+
+        writers = []
+        if mp4_writer.isOpened():
+            writers.append(("mp4", mp4_writer, mp4_path))
+        else:
+            print(f"[VIDEO] Failed to open MP4 writer")
+        if webm_writer.isOpened():
+            writers.append(("webm", webm_writer, webm_path))
+        else:
+            print(f"[VIDEO] Failed to open WebM writer")
+
+        if not writers:
+            print("[VIDEO] No writers available — skipping")
             return
 
         # Write first frame (with overlay if present)
         _draw_overlay(first, frames[0][2] if len(frames[0]) > 2 else None)
-        writer.write(first)
+        for _, writer, _ in writers:
+            writer.write(first)
 
         # Decode and write remaining frames one at a time
         for entry in frames[1:]:
-            _, jpeg_bytes = entry[0], entry[1]
             overlay = entry[2] if len(entry) > 2 else None
-            frame = cv2.imdecode(np.frombuffer(jpeg_bytes, np.uint8), cv2.IMREAD_COLOR)
+            frame = cv2.imdecode(np.frombuffer(entry[1], np.uint8), cv2.IMREAD_COLOR)
             if frame is not None:
                 _draw_overlay(frame, overlay)
-                writer.write(frame)
+                for _, writer, _ in writers:
+                    writer.write(frame)
 
-        writer.release()
-
-        file_size = os.path.getsize(filepath)
-        print(f"✅ Video saved: {os.path.basename(filepath)} ({len(frames)} frames, {duration:.1f}s, {fps:.1f}fps, {file_size / 1024 / 1024:.1f}MB)")
+        # Release and report
+        for fmt, writer, path in writers:
+            writer.release()
+            file_size = os.path.getsize(path)
+            print(f"✅ Video saved: {os.path.basename(path)} ({len(frames)} frames, {duration:.1f}s, {fps:.1f}fps, {file_size / 1024 / 1024:.1f}MB)")
 
     except Exception as e:
         print(f"[VIDEO] Write error: {e}")

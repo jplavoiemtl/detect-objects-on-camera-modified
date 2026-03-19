@@ -168,12 +168,16 @@ def delete_oldest_detection(detection_history: List[dict]) -> None:
     except Exception as e:
         print(f"[HISTORY] Error deleting image: {e}")
 
-    try:
-        if oldest.get("video_filename") and os.path.exists(video_path):
-            os.remove(video_path)
-            print(f"[HISTORY] Deleted oldest video: {oldest.get('video_filename')}")
-    except Exception as e:
-        print(f"[HISTORY] Error deleting video: {e}")
+    video_filename = oldest.get("video_filename", "")
+    if video_filename:
+        for ext in (".mp4", ".webm"):
+            vpath = os.path.join(VIDEOS_DIR, video_filename.replace(".mp4", ext))
+            try:
+                if os.path.exists(vpath):
+                    os.remove(vpath)
+                    print(f"[HISTORY] Deleted oldest video: {os.path.basename(vpath)}")
+            except Exception as e:
+                print(f"[HISTORY] Error deleting video: {e}")
 
     rewrite_log_file(detection_history)
 
