@@ -30,8 +30,8 @@ const liveDateTime = document.getElementById('liveDateTime');
 const btnFullscreen = document.getElementById('btnFullscreen');
 const btnWakeLock = document.getElementById('btnWakeLock');
 const btnDownload = document.getElementById('btnDownload');
-const btnShare = document.getElementById('btnShare');
 const btnLiveSnapshot = document.getElementById('btnLiveSnapshot');
+const btnDownloadVideo = document.getElementById('btnDownloadVideo');
 const imageActions = document.getElementById('imageActions');
 const toastContainer = document.getElementById('toast-container');
 const videoFeedContainer = document.getElementById('videoFeedContainer');
@@ -109,13 +109,8 @@ function initNavigation() {
     if (btnLiveSnapshot) {
         btnLiveSnapshot.addEventListener('click', requestLiveSnapshot);
     }
-    if (btnShare) {
-        // Hide share if not supported
-        if (!navigator.share) {
-            btnShare.style.display = 'none';
-        } else {
-            btnShare.addEventListener('click', shareCurrentDetection);
-        }
+    if (btnDownloadVideo) {
+        btnDownloadVideo.addEventListener('click', downloadCurrentVideo);
     }
     if (btnPlayVideo) {
         btnPlayVideo.addEventListener('click', playDetectionVideo);
@@ -204,10 +199,10 @@ function showHistoryImage() {
     if (btnLiveSnapshot) btnLiveSnapshot.style.display = 'none';
     if (imageActions) imageActions.style.display = 'flex';
 
-    // Show play button if this detection has a video
-    if (btnPlayVideo) {
-        btnPlayVideo.style.display = entry.video_filename ? 'flex' : 'none';
-    }
+    // Show play/download video buttons if this detection has a video
+    const hasVideo = !!entry.video_filename;
+    if (btnPlayVideo) btnPlayVideo.style.display = hasVideo ? 'flex' : 'none';
+    if (btnDownloadVideo) btnDownloadVideo.style.display = hasVideo ? 'flex' : 'none';
 
     // Load the image (served from assets/images/)
     if (savedImage && entry.filename) {
@@ -679,19 +674,37 @@ async function downloadCurrentDetection() {
     }
 }
 
-async function shareCurrentDetection() {
+async function downloadCurrentVideo() {
     if (historyIndex < 0 || historyIndex >= detectionHistory.length) return;
     const entry = detectionHistory[historyIndex];
-    if (entry && entry.filename && navigator.share) {
+    if (entry && entry.video_filename) {
         try {
-            const url = `${window.location.origin}/images/${entry.filename}`;
-            await navigator.share({
-                title: 'Object Detection',
-                text: `Detected ${entry.label || 'object'}`,
-                url: url
-            });
+            const response = await fetch(`/videos/${entry.video_filename}`);
+            const blob = await response.blob();
+
+            const file = new File([blob], entry.video_filename, { type: 'video/mp4' });
+            if (navigator.canShare && navigator.canShare({ files: [file] })) {
+                await navigator.share({ files: [file] });
+            } else {
+                const link = document.createElement('a');
+                const objectUrl = URL.createObjectURL(blob);
+                link.href = objectUrl;
+                link.download = entry.video_filename;
+                document.body.appendChild(link);
+                link.click();
+                setTimeout(() => {
+                    document.body.removeChild(link);
+                    URL.revokeObjectURL(objectUrl);
+                }, 100);
+            }
         } catch (err) {
-            console.error('Error sharing:', err);
+            console.error('Video download error:', err);
+            const link = document.createElement('a');
+            link.href = `/videos/${entry.video_filename}`;
+            link.download = entry.video_filename;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
         }
     }
 }
