@@ -381,6 +381,17 @@ body {
     object-fit: cover;
 }
 
+#detectionVideo {
+    width: var(--video-width);
+    height: var(--video-height);
+    background: var(--bg-surface-solid);
+    border-radius: 8px;
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.6);
+
+    transform: translate3d(var(--pan-x, 0px), var(--pan-y, 0px), 0) scale(calc(var(--video-scale) * var(--zoom-scale, 1)));
+    transform-origin: center center;
+}
+
 /* Responsive scaling for smaller screens */
 @media (max-width: 850px) {
     :root {
@@ -406,6 +417,11 @@ body {
     }
 
     #saved-image-wrapper {
+        transform: translate3d(var(--pan-x, 0px), var(--pan-y, 0px), 0) scale(calc(var(--video-scale) * var(--zoom-scale, 1)));
+        border-radius: 0;
+    }
+
+    #detectionVideo {
         transform: translate3d(var(--pan-x, 0px), var(--pan-y, 0px), 0) scale(calc(var(--video-scale) * var(--zoom-scale, 1)));
         border-radius: 0;
     }

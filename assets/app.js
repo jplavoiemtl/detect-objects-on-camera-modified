@@ -779,6 +779,16 @@ if (liveOverlay) {
     liveOverlay.addEventListener('wheel', onWheel, {passive: false});
 }
 
+if (detectionVideo) {
+    detectionVideo.style.touchAction = 'none';
+    detectionVideo.addEventListener('pointerdown', onPointerDown);
+    detectionVideo.addEventListener('pointermove', onPointerMove);
+    detectionVideo.addEventListener('pointerup', onPointerUp);
+    detectionVideo.addEventListener('pointercancel', onPointerUp);
+    detectionVideo.addEventListener('pointerleave', onPointerUp);
+    detectionVideo.addEventListener('wheel', onWheel, {passive: false});
+}
+
 function resetTransform() {
     transform = { x: 0, y: 0, scale: 1 };
     applyTransform();
