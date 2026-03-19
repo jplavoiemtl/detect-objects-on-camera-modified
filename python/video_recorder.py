@@ -23,12 +23,16 @@ MAX_FPS_ESTIMATE = 15       # ceiling for deque maxlen calculation
 MAX_VIDEO_FILES = 5         # rotation limit
 VIDEOS_DIR = os.path.join("assets", "videos")
 
+# --------------- Overlay ---------------
+OVERLAY_STALE_SEC = 1.0     # bbox overlay expires after this many seconds
+
 # --------------- State ---------------
 _buffer = collections.deque(maxlen=BUFFER_SECONDS * MAX_FPS_ESTIMATE)
 _recording_active = False
 _post_frames = []           # frames collected after trigger
 _post_deadline = 0.0        # timestamp when post-collection ends
 _lock = threading.Lock()
+_current_overlay = None     # (bbox_xyxy, label, confidence, timestamp)
 
 
 def init():
@@ -37,12 +41,25 @@ def init():
     print(f"[VIDEO] Recorder initialized — buffer={BUFFER_SECONDS}s, post={POST_SECONDS}s, dir={VIDEOS_DIR}")
 
 
+def update_overlay(bbox_xyxy, label, confidence):
+    """Update the current detection overlay. Called from inner_main.py on every detection."""
+    global _current_overlay
+    if bbox_xyxy and len(bbox_xyxy) == 4:
+        _current_overlay = (list(bbox_xyxy), label, confidence, time.time())
+
+
 def buffer_frame(jpeg_bytes):
     """Append a JPEG frame to the circular buffer. Called from capture.py on every frame."""
     global _recording_active, _post_deadline
 
     now = time.time()
-    entry = (now, jpeg_bytes)
+
+    # Attach current overlay if fresh
+    overlay = None
+    if _current_overlay and (now - _current_overlay[3]) < OVERLAY_STALE_SEC:
+        overlay = _current_overlay[:3]  # (bbox_xyxy, label, confidence)
+
+    entry = (now, jpeg_bytes, overlay)
 
     with _lock:
         _buffer.append(entry)
@@ -110,8 +127,23 @@ def _finalize_recording():
     ).start()
 
 
+def _draw_overlay(frame, overlay):
+    """Draw detection bounding box and label on a frame."""
+    if not overlay:
+        return
+    from capture import scale_bbox_to_frame
+    bbox_xyxy, label, confidence = overlay
+    scaled = scale_bbox_to_frame(bbox_xyxy, frame.shape)
+    if not scaled:
+        return
+    x1, y1, x2, y2 = [int(c) for c in scaled]
+    cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+    text = f"{label} {confidence:.0%}"
+    cv2.putText(frame, text, (x1, y1 - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+
+
 def _write_video(frames, filepath):
-    """Decode JPEG frames and write to AVI file. Runs in background thread."""
+    """Decode JPEG frames, draw overlays, and write to AVI file. Runs in background thread."""
     try:
         # Calculate actual FPS from timestamps
         duration = frames[-1][0] - frames[0][0]
@@ -134,13 +166,17 @@ def _write_video(frames, filepath):
             print(f"[VIDEO] Failed to open VideoWriter for {filepath}")
             return
 
-        # Write first frame
+        # Write first frame (with overlay if present)
+        _draw_overlay(first, frames[0][2] if len(frames[0]) > 2 else None)
         writer.write(first)
 
         # Decode and write remaining frames one at a time
-        for _, jpeg_bytes in frames[1:]:
+        for entry in frames[1:]:
+            _, jpeg_bytes = entry[0], entry[1]
+            overlay = entry[2] if len(entry) > 2 else None
             frame = cv2.imdecode(np.frombuffer(jpeg_bytes, np.uint8), cv2.IMREAD_COLOR)
             if frame is not None:
+                _draw_overlay(frame, overlay)
                 writer.write(frame)
 
         writer.release()

@@ -243,6 +243,9 @@ def on_detections(detections: dict):
         mark_progress("detection")
         bbox_xyxy = det.get("bounding_box_xyxy", [])
 
+        # Update video overlay on every detection so recorded clips have bounding boxes
+        video_recorder.update_overlay(bbox_xyxy, DETECTION_LABEL, confidence)
+
         # Turn LED on if not already on
         if not led_on:
             set_led(True)
