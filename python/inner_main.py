@@ -36,6 +36,7 @@ from persistence import (
 )
 from capture import (
     capture_and_save_detection,
+    get_snapshot_jpeg,
     get_stream_health,
     get_stream_status,
     start_capture_reconnect_daemon,
@@ -52,6 +53,7 @@ from ui_handlers import (
     handle_image_request,
     handle_label_override,
     handle_labels_request,
+    handle_snapshot_request,
     handle_stream_health_request,
     handle_threshold_request,
 )
@@ -341,6 +343,10 @@ ui.on_message(
     lambda sid, val: handle_stream_health_request(
         lambda: emit_stream_health(ui, get_stream_health()), sid, val
     ),
+)
+ui.on_message(
+    "request_snapshot",
+    lambda sid, val: handle_snapshot_request(ui, get_snapshot_jpeg, sid, val),
 )
 emit_detected_labels(ui, detected_labels, DETECTION_LABEL)
 

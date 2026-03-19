@@ -31,6 +31,8 @@ const btnFullscreen = document.getElementById('btnFullscreen');
 const btnWakeLock = document.getElementById('btnWakeLock');
 const btnDownload = document.getElementById('btnDownload');
 const btnShare = document.getElementById('btnShare');
+const btnLiveSnapshot = document.getElementById('btnLiveSnapshot');
+const imageActions = document.getElementById('imageActions');
 const toastContainer = document.getElementById('toast-container');
 const videoFeedContainer = document.getElementById('videoFeedContainer');
 
@@ -102,6 +104,9 @@ function initNavigation() {
     if (btnDownload) {
         btnDownload.addEventListener('click', downloadCurrentDetection);
     }
+    if (btnLiveSnapshot) {
+        btnLiveSnapshot.addEventListener('click', requestLiveSnapshot);
+    }
     if (btnShare) {
         // Hide share if not supported
         if (!navigator.share) {
@@ -119,6 +124,8 @@ function setLiveMode() {
     // Show iframe, hide saved image
     if (iframeWrapper) iframeWrapper.style.display = 'block';
     if (savedImageWrapper) savedImageWrapper.style.display = 'none';
+    if (btnLiveSnapshot) btnLiveSnapshot.style.display = 'flex';
+    if (imageActions) imageActions.style.display = 'none';
 
     // Update UI
     updatePositionIndicator();
@@ -175,6 +182,8 @@ function showHistoryImage() {
     // Hide iframe, show saved image
     if (iframeWrapper) iframeWrapper.style.display = 'none';
     if (savedImageWrapper) savedImageWrapper.style.display = 'block';
+    if (btnLiveSnapshot) btnLiveSnapshot.style.display = 'none';
+    if (imageActions) imageActions.style.display = 'flex';
 
     // Load the image (served from assets/images/)
     if (savedImage && entry.filename) {
@@ -325,6 +334,9 @@ function initSocketIO() {
 
     // Stream health updates
     socket.on('stream_health', handleStreamHealth);
+
+    // Live snapshot response
+    socket.on('snapshot', handleSnapshot);
 }
 
 function handleThreshold(payload) {
@@ -517,6 +529,42 @@ function updateWakeLockButton() {
         btnWakeLock.title = 'Keep screen awake';
         // Closed eye icon (eye-off)
         document.getElementById('wakeLockIcon').innerHTML = '<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/>';
+    }
+}
+
+function requestLiveSnapshot() {
+    if (!socket || !socket.connected) {
+        showToast('Not connected');
+        return;
+    }
+    btnLiveSnapshot.disabled = true;
+    socket.emit('request_snapshot', {});
+}
+
+function handleSnapshot(data) {
+    if (btnLiveSnapshot) btnLiveSnapshot.disabled = false;
+    if (data.error) {
+        showToast('No frame available');
+        return;
+    }
+    const byteString = atob(data.jpeg);
+    const ab = new ArrayBuffer(byteString.length);
+    const ia = new Uint8Array(ab);
+    for (let i = 0; i < byteString.length; i++) ia[i] = byteString.charCodeAt(i);
+    const blob = new Blob([ab], { type: 'image/jpeg' });
+    const filename = 'snapshot_' + new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19) + '.jpg';
+
+    const file = new File([blob], filename, { type: 'image/jpeg' });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        navigator.share({ files: [file] }).catch(() => {});
+    } else {
+        const link = document.createElement('a');
+        const url = URL.createObjectURL(blob);
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        setTimeout(() => { document.body.removeChild(link); URL.revokeObjectURL(url); }, 100);
     }
 }
 

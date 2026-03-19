@@ -111,6 +111,21 @@ def handle_threshold_request(emit_threshold_fn, _sid, _value):
     emit_threshold_fn()
 
 
+def handle_snapshot_request(ui, get_snapshot_fn, _sid, _value):
+    """Capture current live frame and send as base64 JPEG."""
+    jpeg_b64 = get_snapshot_fn()
+    if jpeg_b64:
+        try:
+            ui.send_message("snapshot", message={"jpeg": jpeg_b64})
+        except Exception as e:
+            print(f"[UI] Failed to emit snapshot: {e}")
+    else:
+        try:
+            ui.send_message("snapshot", message={"error": "No frame available"})
+        except Exception as e:
+            print(f"[UI] Failed to emit snapshot error: {e}")
+
+
 def handle_image_request(ui, detection_history: List[dict], _sid, value):
     """Send specific detection record by index."""
     try:

@@ -568,6 +568,15 @@ def get_stream_status():
     return {"connected": _sio_connected, "frame_age": frame_age}
 
 
+def get_snapshot_jpeg():
+    """Return the current frame as a base64-encoded JPEG, or None if unavailable."""
+    frame = capture_frame()
+    if frame is None:
+        return None
+    _, buf = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+    return base64.b64encode(buf).decode('ascii')
+
+
 def capture_and_save_detection(
     label: str,
     confidence: float,

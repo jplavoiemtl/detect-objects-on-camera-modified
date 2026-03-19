@@ -551,6 +551,12 @@ body {
         height: 100%;
         padding: 0;
     }
+
+    /* Constrain to scaled video size so overlay buttons hug the video corners */
+    #videoFeedContainer {
+        width: calc(var(--video-width) * var(--video-scale));
+        height: calc(var(--video-height) * var(--video-scale));
+    }
     
     .nav-row {
         gap: 6px;
