@@ -26,6 +26,7 @@ OVERLAY_STALE_SEC = 1.0     # bbox overlay expires after this many seconds
 # --------------- State ---------------
 _buffer = collections.deque(maxlen=BUFFER_SECONDS * MAX_FPS_ESTIMATE)
 _recording_active = False
+_pre_frames = []            # snapshot of buffer at trigger time
 _post_frames = []           # frames collected after trigger
 _post_deadline = 0.0        # timestamp when post-collection ends
 _recording_filepath = None  # filepath for the current recording
@@ -72,7 +73,7 @@ def buffer_frame(jpeg_bytes):
 
 def trigger_recording(label, confidence, video_filename):
     """Start recording a clip. Called from inner_main.py on detection."""
-    global _recording_active, _post_frames, _post_deadline, _recording_filepath
+    global _recording_active, _pre_frames, _post_frames, _post_deadline, _recording_filepath
 
     filepath = os.path.join(VIDEOS_DIR, video_filename)
 
@@ -81,8 +82,8 @@ def trigger_recording(label, confidence, video_filename):
             # Already recording — skip this trigger
             return
 
-        # Snapshot the pre-buffer
-        pre_frames = list(_buffer)
+        # Snapshot the pre-buffer now — before post-collection pushes out old frames
+        _pre_frames = list(_buffer)
 
         # Start post-detection collection
         _post_frames = []
@@ -90,24 +91,19 @@ def trigger_recording(label, confidence, video_filename):
         _recording_active = True
         _recording_filepath = filepath
 
-    print(f"[VIDEO] Recording triggered: {label} ({confidence:.2f}) — {len(pre_frames)} pre-frames buffered")
+    print(f"[VIDEO] Recording triggered: {label} ({confidence:.2f}) — {len(_pre_frames)} pre-frames buffered")
 
 
 def _finalize_recording():
     """Called with _lock held when post-collection is complete."""
-    global _recording_active, _post_frames, _recording_filepath
+    global _recording_active, _pre_frames, _post_frames, _recording_filepath
 
-    pre_frames = list(_buffer)
-    # pre_frames from the deque may overlap with _post_frames since the deque
-    # kept appending. Build the full list: everything in pre_frames that has a
-    # timestamp before the first post frame, then all post frames.
-    if _post_frames:
-        post_start_time = _post_frames[0][0]
-        combined = [f for f in pre_frames if f[0] < post_start_time] + _post_frames
-    else:
-        combined = pre_frames
+    # Use the pre-buffer snapshot from trigger time (not the current buffer,
+    # which has lost old frames during post-collection)
+    combined = list(_pre_frames) + list(_post_frames)
 
     filepath = _recording_filepath
+    _pre_frames = []
     _post_frames = []
     _recording_active = False
     _recording_filepath = None
