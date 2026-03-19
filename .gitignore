@@ -11,8 +11,9 @@ dist/
 .DS_Store
 Thumbs.db
 **/mqtt_secrets.py
-# Generated detection images
+# Generated detection images and video clips
 assets/images/
+assets/videos/
 # Persisted user settings (generated at runtime)
 data/settings.json
 # Editor local settings
