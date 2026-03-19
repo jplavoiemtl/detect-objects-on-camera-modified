@@ -42,6 +42,7 @@ from capture import (
     start_capture_reconnect_daemon,
 )
 from health_monitor import mark_progress, start_health_monitor
+import video_recorder
 from ui_handlers import (
     emit_detected_labels,
     emit_detection_saved,
@@ -133,6 +134,7 @@ WATCHDOG_THRESHOLD = 90  # Seconds since last detection to consider the system i
 threading.Thread(target=heartbeat, daemon=True).start()
 start_health_monitor()
 start_capture_reconnect_daemon()
+video_recorder.init()
 
 # ================= STREAM HEALTH BROADCAST =================
 STREAM_HEALTH_INTERVAL = 10  # seconds between health broadcasts
@@ -279,6 +281,7 @@ def on_detections(detections: dict):
             )
             if entry:
                 emit_detection_saved(ui, detection_history, entry)
+                video_recorder.trigger_recording(DETECTION_LABEL, confidence)
 
             playAnimation()
 

@@ -202,6 +202,9 @@ def _process_frame_data(data):
         
         # Decode and convert to frame
         img_bytes = base64.b64decode(img_data)
+        # Feed raw JPEG bytes to video recorder circular buffer
+        from video_recorder import buffer_frame
+        buffer_frame(img_bytes)
         frame = cv2.imdecode(np.frombuffer(img_bytes, np.uint8), cv2.IMREAD_COLOR)
         
         if frame is not None:
