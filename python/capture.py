@@ -631,9 +631,11 @@ def capture_and_save_detection(
         return None, next_detection_id
 
     # Create log entry
+    video_filename = filename.replace(".jpg", ".mp4")
     entry = {
         "id": next_detection_id,
         "filename": filename,
+        "video_filename": video_filename,
         "label": label,
         "confidence": confidence,
         "timestamp": current_time,

@@ -35,6 +35,8 @@ const btnLiveSnapshot = document.getElementById('btnLiveSnapshot');
 const imageActions = document.getElementById('imageActions');
 const toastContainer = document.getElementById('toast-container');
 const videoFeedContainer = document.getElementById('videoFeedContainer');
+const detectionVideo = document.getElementById('detectionVideo');
+const btnPlayVideo = document.getElementById('btnPlayVideo');
 
 // History state
 let viewMode = 'live'; // 'live' | 'history'
@@ -115,17 +117,31 @@ function initNavigation() {
             btnShare.addEventListener('click', shareCurrentDetection);
         }
     }
+    if (btnPlayVideo) {
+        btnPlayVideo.addEventListener('click', playDetectionVideo);
+    }
+    if (detectionVideo) {
+        detectionVideo.addEventListener('ended', stopDetectionVideo);
+        detectionVideo.addEventListener('error', () => {
+            showToast('Video not available');
+            stopDetectionVideo();
+        });
+    }
 }
 
 function setLiveMode() {
     viewMode = 'live';
     historyIndex = -1;
 
+    // Stop any playing video
+    stopDetectionVideo();
+
     // Show iframe, hide saved image
     if (iframeWrapper) iframeWrapper.style.display = 'block';
     if (savedImageWrapper) savedImageWrapper.style.display = 'none';
     if (btnLiveSnapshot) btnLiveSnapshot.style.display = 'flex';
     if (imageActions) imageActions.style.display = 'none';
+    if (btnPlayVideo) btnPlayVideo.style.display = 'none';
 
     // Update UI
     updatePositionIndicator();
@@ -179,11 +195,19 @@ function showHistoryImage() {
 
     const entry = detectionHistory[historyIndex];
 
+    // Stop any playing video
+    stopDetectionVideo();
+
     // Hide iframe, show saved image
     if (iframeWrapper) iframeWrapper.style.display = 'none';
     if (savedImageWrapper) savedImageWrapper.style.display = 'block';
     if (btnLiveSnapshot) btnLiveSnapshot.style.display = 'none';
     if (imageActions) imageActions.style.display = 'flex';
+
+    // Show play button if this detection has a video
+    if (btnPlayVideo) {
+        btnPlayVideo.style.display = entry.video_filename ? 'flex' : 'none';
+    }
 
     // Load the image (served from assets/images/)
     if (savedImage && entry.filename) {
@@ -194,6 +218,31 @@ function showHistoryImage() {
     showDetectionInfo(entry);
     updatePositionIndicator();
     updateButtonStates();
+}
+
+function playDetectionVideo() {
+    if (historyIndex < 0 || historyIndex >= detectionHistory.length) return;
+    const entry = detectionHistory[historyIndex];
+    if (!entry.video_filename || !detectionVideo) return;
+
+    // Hide image, show video
+    if (savedImageWrapper) savedImageWrapper.style.display = 'none';
+    if (btnPlayVideo) btnPlayVideo.style.display = 'none';
+    if (imageActions) imageActions.style.display = 'none';
+    detectionVideo.style.display = 'block';
+    detectionVideo.src = `/videos/${entry.video_filename}`;
+    detectionVideo.play().catch(() => {
+        showToast('Video not available');
+        stopDetectionVideo();
+    });
+}
+
+function stopDetectionVideo() {
+    if (!detectionVideo) return;
+    detectionVideo.pause();
+    detectionVideo.removeAttribute('src');
+    detectionVideo.load();
+    detectionVideo.style.display = 'none';
 }
 
 function showDetectionInfo(entry) {

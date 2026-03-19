@@ -7,6 +7,7 @@ from typing import List, Tuple
 MAX_DETECTION_IMAGES = 40  # Maximum number of saved detection images
 DATA_DIR = "data"
 IMAGES_DIR = os.path.join("assets", "images")  # Save to assets so WebUI can serve them
+VIDEOS_DIR = os.path.join("assets", "videos")  # Save to assets so WebUI can serve them
 LOG_FILE = os.path.join(DATA_DIR, "imageslist.log")
 SETTINGS_FILE = os.path.join(DATA_DIR, "settings.json")
 
@@ -152,12 +153,13 @@ def flush_settings():
 
 
 def delete_oldest_detection(detection_history: List[dict]) -> None:
-    """Delete the oldest detection image and remove from history."""
+    """Delete the oldest detection image, its associated video, and remove from history."""
     if not detection_history:
         return
 
     oldest = detection_history.pop(0)
     image_path = os.path.join(IMAGES_DIR, oldest.get("filename", ""))
+    video_path = os.path.join(VIDEOS_DIR, oldest.get("video_filename", ""))
 
     try:
         if os.path.exists(image_path):
@@ -165,6 +167,13 @@ def delete_oldest_detection(detection_history: List[dict]) -> None:
             print(f"[HISTORY] Deleted oldest image: {oldest.get('filename')}")
     except Exception as e:
         print(f"[HISTORY] Error deleting image: {e}")
+
+    try:
+        if oldest.get("video_filename") and os.path.exists(video_path):
+            os.remove(video_path)
+            print(f"[HISTORY] Deleted oldest video: {oldest.get('video_filename')}")
+    except Exception as e:
+        print(f"[HISTORY] Error deleting video: {e}")
 
     rewrite_log_file(detection_history)
 

@@ -284,7 +284,7 @@ def on_detections(detections: dict):
             )
             if entry:
                 emit_detection_saved(ui, detection_history, entry)
-                video_recorder.trigger_recording(DETECTION_LABEL, confidence)
+                video_recorder.trigger_recording(DETECTION_LABEL, confidence, entry["video_filename"])
 
             playAnimation()
 

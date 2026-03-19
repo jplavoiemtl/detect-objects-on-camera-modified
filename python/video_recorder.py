@@ -1,11 +1,9 @@
-"""Video recorder — circular buffer + MJPEG writer for detection clips.
+"""Video recorder — circular buffer + MP4 writer for detection clips.
 
 Continuously buffers incoming JPEG frames. When a detection triggers
 recording, the pre-buffer is snapshotted and post-detection frames are
 collected for a few more seconds. The combined clip is written to an
-AVI file in a background thread.
-
-This is a proof-of-concept module to test feasibility on Arduino UNO Q.
+MP4 file using mp4v codec in a background thread.
 """
 
 import collections
@@ -17,10 +15,9 @@ import cv2
 import numpy as np
 
 # --------------- Configuration ---------------
-BUFFER_SECONDS = 5          # seconds of video before detection
+BUFFER_SECONDS = 5          # seconds of video before detection.
 POST_SECONDS = 5            # seconds of video after detection
 MAX_FPS_ESTIMATE = 15       # ceiling for deque maxlen calculation
-MAX_VIDEO_FILES = 5         # rotation limit
 VIDEOS_DIR = os.path.join("assets", "videos")
 
 # --------------- Overlay ---------------
@@ -31,6 +28,7 @@ _buffer = collections.deque(maxlen=BUFFER_SECONDS * MAX_FPS_ESTIMATE)
 _recording_active = False
 _post_frames = []           # frames collected after trigger
 _post_deadline = 0.0        # timestamp when post-collection ends
+_recording_filepath = None  # filepath for the current recording
 _lock = threading.Lock()
 _current_overlay = None     # (bbox_xyxy, label, confidence, timestamp)
 
@@ -72,9 +70,11 @@ def buffer_frame(jpeg_bytes):
                 _finalize_recording()
 
 
-def trigger_recording(label, confidence):
+def trigger_recording(label, confidence, video_filename):
     """Start recording a clip. Called from inner_main.py on detection."""
-    global _recording_active, _post_frames, _post_deadline
+    global _recording_active, _post_frames, _post_deadline, _recording_filepath
+
+    filepath = os.path.join(VIDEOS_DIR, video_filename)
 
     with _lock:
         if _recording_active:
@@ -88,13 +88,14 @@ def trigger_recording(label, confidence):
         _post_frames = []
         _post_deadline = time.time() + POST_SECONDS
         _recording_active = True
+        _recording_filepath = filepath
 
     print(f"[VIDEO] Recording triggered: {label} ({confidence:.2f}) — {len(pre_frames)} pre-frames buffered")
 
 
 def _finalize_recording():
     """Called with _lock held when post-collection is complete."""
-    global _recording_active, _post_frames
+    global _recording_active, _post_frames, _recording_filepath
 
     pre_frames = list(_buffer)
     # pre_frames from the deque may overlap with _post_frames since the deque
@@ -106,17 +107,14 @@ def _finalize_recording():
     else:
         combined = pre_frames
 
+    filepath = _recording_filepath
     _post_frames = []
     _recording_active = False
+    _recording_filepath = None
 
     if len(combined) < 5:
         print("[VIDEO] Too few frames captured — skipping write")
         return
-
-    # Generate filename
-    ts = time.strftime("%Y%m%d_%H%M%S")
-    filename = f"clip_{ts}.mp4"
-    filepath = os.path.join(VIDEOS_DIR, filename)
 
     # Hand off to background writer
     threading.Thread(
@@ -143,7 +141,7 @@ def _draw_overlay(frame, overlay):
 
 
 def _write_video(frames, filepath):
-    """Decode JPEG frames, draw overlays, and write to AVI file. Runs in background thread."""
+    """Decode JPEG frames, draw overlays, and write to MP4 file. Runs in background thread."""
     try:
         # Calculate actual FPS from timestamps
         duration = frames[-1][0] - frames[0][0]
@@ -184,23 +182,5 @@ def _write_video(frames, filepath):
         file_size = os.path.getsize(filepath)
         print(f"✅ Video saved: {os.path.basename(filepath)} ({len(frames)} frames, {duration:.1f}s, {fps:.1f}fps, {file_size / 1024 / 1024:.1f}MB)")
 
-        # Rotate old files
-        _rotate_videos()
-
     except Exception as e:
         print(f"[VIDEO] Write error: {e}")
-
-
-def _rotate_videos():
-    """Delete oldest video files if over the limit."""
-    try:
-        files = sorted(
-            [os.path.join(VIDEOS_DIR, f) for f in os.listdir(VIDEOS_DIR) if f.endswith('.mp4')],
-            key=os.path.getmtime,
-        )
-        while len(files) > MAX_VIDEO_FILES:
-            oldest = files.pop(0)
-            os.remove(oldest)
-            print(f"[VIDEO] Rotated old clip: {os.path.basename(oldest)}")
-    except Exception as e:
-        print(f"[VIDEO] Rotation error: {e}")
