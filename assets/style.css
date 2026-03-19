@@ -582,6 +582,20 @@ body {
 }
 
 
+/* --- Wake Lock button: mobile only --- */
+@media (max-width: 850px) {
+    #btnWakeLock {
+        display: flex !important;
+        align-items: center;
+        justify-content: center;
+    }
+}
+
+#btnWakeLock.active {
+    background: rgba(245, 158, 11, 0.4) !important;
+    box-shadow: 0 0 8px rgba(245, 158, 11, 0.6);
+}
+
 /* --- DSR: Step 4 Mobile Touch & Safes Area --- */
 @media (max-width: 850px) {
     body {

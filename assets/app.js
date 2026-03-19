@@ -28,6 +28,7 @@ const liveDateTime = document.getElementById('liveDateTime');
 
 // New interaction elements
 const btnFullscreen = document.getElementById('btnFullscreen');
+const btnWakeLock = document.getElementById('btnWakeLock');
 const btnDownload = document.getElementById('btnDownload');
 const btnShare = document.getElementById('btnShare');
 const toastContainer = document.getElementById('toast-container');
@@ -94,6 +95,9 @@ function initNavigation() {
     
     if (btnFullscreen) {
         btnFullscreen.addEventListener('click', toggleFullscreen);
+    }
+    if (btnWakeLock) {
+        btnWakeLock.addEventListener('click', toggleWakeLock);
     }
     if (btnDownload) {
         btnDownload.addEventListener('click', downloadCurrentDetection);
@@ -475,6 +479,44 @@ function toggleFullscreen() {
         } else if (document.webkitExitFullscreen) {
             document.webkitExitFullscreen();
         }
+    }
+}
+
+// --- Screen Awake (NoSleep.js v0.12.0) ---
+// navigator.wakeLock is masked in index.html on HTTP so NoSleep.js uses its
+// video fallback (the native API exists on iOS but silently fails over HTTP).
+const _noSleep = new NoSleep();
+let wakeLockEnabled = false;
+
+function toggleWakeLock() {
+    if (wakeLockEnabled) {
+        _noSleep.disable();
+        wakeLockEnabled = false;
+        updateWakeLockButton();
+        showToast('Screen Awake off');
+    } else {
+        _noSleep.enable().then(() => {
+            wakeLockEnabled = true;
+            updateWakeLockButton();
+            showToast('Screen Awake on');
+        }).catch(() => {
+            showToast('Screen Awake failed — tap again');
+        });
+    }
+}
+
+function updateWakeLockButton() {
+    if (!btnWakeLock) return;
+    if (wakeLockEnabled) {
+        btnWakeLock.classList.add('active');
+        btnWakeLock.title = 'Screen Awake is on';
+        // Open eye icon
+        document.getElementById('wakeLockIcon').innerHTML = '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>';
+    } else {
+        btnWakeLock.classList.remove('active');
+        btnWakeLock.title = 'Keep screen awake';
+        // Closed eye icon (eye-off)
+        document.getElementById('wakeLockIcon').innerHTML = '<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/>';
     }
 }
 
