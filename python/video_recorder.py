@@ -115,7 +115,7 @@ def _finalize_recording():
 
     # Generate filename
     ts = time.strftime("%Y%m%d_%H%M%S")
-    filename = f"clip_{ts}.avi"
+    filename = f"clip_{ts}.mp4"
     filepath = os.path.join(VIDEOS_DIR, filename)
 
     # Hand off to background writer
@@ -159,7 +159,7 @@ def _write_video(frames, filepath):
             return
         h, w = first.shape[:2]
 
-        fourcc = cv2.VideoWriter_fourcc(*'MJPG')
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         writer = cv2.VideoWriter(filepath, fourcc, fps, (w, h))
 
         if not writer.isOpened():
@@ -195,7 +195,7 @@ def _rotate_videos():
     """Delete oldest video files if over the limit."""
     try:
         files = sorted(
-            [os.path.join(VIDEOS_DIR, f) for f in os.listdir(VIDEOS_DIR) if f.endswith('.avi')],
+            [os.path.join(VIDEOS_DIR, f) for f in os.listdir(VIDEOS_DIR) if f.endswith('.mp4')],
             key=os.path.getmtime,
         )
         while len(files) > MAX_VIDEO_FILES:
