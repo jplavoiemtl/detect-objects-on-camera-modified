@@ -49,6 +49,7 @@ from ui_handlers import (
     emit_history_list,
     emit_stream_health,
     emit_threshold,
+    handle_clip_request,
     handle_confidence_override,
     handle_history_request,
     handle_image_request,
@@ -353,6 +354,10 @@ ui.on_message(
 ui.on_message(
     "request_snapshot",
     lambda sid, val: handle_snapshot_request(ui, get_snapshot_jpeg, sid, val),
+)
+ui.on_message(
+    "request_clip",
+    lambda sid, val: handle_clip_request(ui, video_recorder.capture_clip, sid, val),
 )
 emit_detected_labels(ui, detected_labels, DETECTION_LABEL)
 

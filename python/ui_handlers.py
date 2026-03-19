@@ -126,6 +126,20 @@ def handle_snapshot_request(ui, get_snapshot_fn, _sid, _value):
             print(f"[UI] Failed to emit snapshot error: {e}")
 
 
+def handle_clip_request(ui, capture_clip_fn, _sid, _value):
+    """Capture a live video clip and send as base64 MP4."""
+    def on_clip_ready(mp4_b64, error):
+        try:
+            if mp4_b64:
+                ui.send_message("video_clip", message={"mp4": mp4_b64})
+            else:
+                ui.send_message("video_clip", message={"error": error or "Recording failed"})
+        except Exception as e:
+            print(f"[UI] Failed to emit video_clip: {e}")
+
+    capture_clip_fn(on_clip_ready)
+
+
 def handle_image_request(ui, detection_history: List[dict], _sid, value):
     """Send specific detection record by index."""
     try:

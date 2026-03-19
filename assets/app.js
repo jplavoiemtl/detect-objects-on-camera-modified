@@ -31,6 +31,8 @@ const btnFullscreen = document.getElementById('btnFullscreen');
 const btnWakeLock = document.getElementById('btnWakeLock');
 const btnDownload = document.getElementById('btnDownload');
 const btnLiveSnapshot = document.getElementById('btnLiveSnapshot');
+const btnLiveClip = document.getElementById('btnLiveClip');
+const liveActions = document.getElementById('liveActions');
 const btnDownloadVideo = document.getElementById('btnDownloadVideo');
 const imageActions = document.getElementById('imageActions');
 const toastContainer = document.getElementById('toast-container');
@@ -109,6 +111,9 @@ function initNavigation() {
     if (btnLiveSnapshot) {
         btnLiveSnapshot.addEventListener('click', requestLiveSnapshot);
     }
+    if (btnLiveClip) {
+        btnLiveClip.addEventListener('click', requestLiveClip);
+    }
     if (btnDownloadVideo) {
         btnDownloadVideo.addEventListener('click', downloadCurrentVideo);
     }
@@ -134,7 +139,7 @@ function setLiveMode() {
     // Show iframe, hide saved image
     if (iframeWrapper) iframeWrapper.style.display = 'block';
     if (savedImageWrapper) savedImageWrapper.style.display = 'none';
-    if (btnLiveSnapshot) btnLiveSnapshot.style.display = 'flex';
+    if (liveActions) liveActions.style.display = 'flex';
     if (imageActions) imageActions.style.display = 'none';
     if (btnPlayVideo) btnPlayVideo.style.display = 'none';
 
@@ -196,7 +201,7 @@ function showHistoryImage() {
     // Hide iframe, show saved image
     if (iframeWrapper) iframeWrapper.style.display = 'none';
     if (savedImageWrapper) savedImageWrapper.style.display = 'block';
-    if (btnLiveSnapshot) btnLiveSnapshot.style.display = 'none';
+    if (liveActions) liveActions.style.display = 'none';
     if (imageActions) imageActions.style.display = 'flex';
 
     // Show play/download video buttons if this detection has a video
@@ -406,6 +411,9 @@ function initSocketIO() {
 
     // Live snapshot response
     socket.on('snapshot', handleSnapshot);
+
+    // Live video clip response
+    socket.on('video_clip', handleVideoClip);
 }
 
 function handleThreshold(payload) {
@@ -635,6 +643,44 @@ function handleSnapshot(data) {
         link.click();
         setTimeout(() => { document.body.removeChild(link); URL.revokeObjectURL(url); }, 100);
     }
+}
+
+function requestLiveClip() {
+    if (!socket || !socket.connected) {
+        showToast('Not connected');
+        return;
+    }
+    if (btnLiveClip) btnLiveClip.disabled = true;
+    showToast('Recording 10s clip...');
+    socket.emit('request_clip', {});
+}
+
+function handleVideoClip(data) {
+    if (btnLiveClip) btnLiveClip.disabled = false;
+    if (data.error) {
+        showToast(data.error);
+        return;
+    }
+    const byteString = atob(data.mp4);
+    const ab = new ArrayBuffer(byteString.length);
+    const ia = new Uint8Array(ab);
+    for (let i = 0; i < byteString.length; i++) ia[i] = byteString.charCodeAt(i);
+    const blob = new Blob([ab], { type: 'video/mp4' });
+    const filename = 'clip_' + new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19) + '.mp4';
+
+    const file = new File([blob], filename, { type: 'video/mp4' });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        navigator.share({ files: [file] }).catch(() => {});
+    } else {
+        const link = document.createElement('a');
+        const url = URL.createObjectURL(blob);
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        setTimeout(() => { document.body.removeChild(link); URL.revokeObjectURL(url); }, 100);
+    }
+    showToast('Video clip ready');
 }
 
 async function downloadCurrentDetection() {
