@@ -629,7 +629,10 @@ function handleSnapshot(data) {
     const ia = new Uint8Array(ab);
     for (let i = 0; i < byteString.length; i++) ia[i] = byteString.charCodeAt(i);
     const blob = new Blob([ab], { type: 'image/jpeg' });
-    const filename = 'snapshot_' + new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19) + '.jpg';
+    const now = new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    const ts = `${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+    const filename = `snapshot_${ts}.jpg`;
 
     const file = new File([blob], filename, { type: 'image/jpeg' });
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
