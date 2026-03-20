@@ -17,8 +17,8 @@ import cv2
 import numpy as np
 
 # --------------- Configuration ---------------
-BUFFER_SECONDS = 3          # seconds of video before detection
-POST_SECONDS = 7            # seconds of video after detection
+BUFFER_SECONDS = 2          # seconds of video before detection
+POST_SECONDS = 8            # seconds of video after detection
 MAX_FPS_ESTIMATE = 15       # ceiling for deque maxlen calculation
 VIDEOS_DIR = os.path.join("assets", "videos")
 
