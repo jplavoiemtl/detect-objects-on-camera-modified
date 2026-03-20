@@ -128,6 +128,14 @@ def capture_clip(callback):
         _recording_filepath = filepath
         _recording_callback = callback
 
+        # DEBUG: buffer state at clip start
+        if _buffer:
+            newest_age = time.time() - _buffer[-1][0]
+            oldest_age = time.time() - _buffer[0][0]
+            print(f"[VIDEO DEBUG] Clip start: buffer has {len(_buffer)} frames, newest={newest_age:.3f}s ago, oldest={oldest_age:.3f}s ago")
+        else:
+            print(f"[VIDEO DEBUG] Clip start: buffer is empty")
+
     print(f"[VIDEO] Manual clip started — recording 10s from now")
 
 
@@ -137,7 +145,18 @@ def _finalize_recording():
 
     # Use the pre-buffer snapshot from trigger time (not the current buffer,
     # which has lost old frames during post-collection)
+    n_pre = len(_pre_frames)
+    n_post = len(_post_frames)
     combined = list(_pre_frames) + list(_post_frames)
+
+    # DEBUG: frame timing analysis
+    clip_start_time = _post_deadline - 10 if n_pre == 0 else _post_deadline - POST_SECONDS
+    print(f"[VIDEO DEBUG] Finalize: {n_pre} pre + {n_post} post = {len(combined)} total")
+    if combined:
+        first_ts = combined[0][0]
+        last_ts = combined[-1][0]
+        print(f"[VIDEO DEBUG] clip_start={clip_start_time:.3f}, first_frame={first_ts:.3f}, last_frame={last_ts:.3f}")
+        print(f"[VIDEO DEBUG] first_frame arrived {first_ts - clip_start_time:.3f}s after clip request, span={last_ts - first_ts:.3f}s")
 
     filepath = _recording_filepath
     callback = _recording_callback

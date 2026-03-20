@@ -669,7 +669,10 @@ function handleVideoClip(data) {
     const ia = new Uint8Array(ab);
     for (let i = 0; i < byteString.length; i++) ia[i] = byteString.charCodeAt(i);
     const blob = new Blob([ab], { type: 'video/mp4' });
-    const filename = 'clip_' + new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19) + '.mp4';
+    const now2 = new Date();
+    const pad2 = (n) => String(n).padStart(2, '0');
+    const ts2 = `${now2.getFullYear()}${pad2(now2.getMonth()+1)}${pad2(now2.getDate())}_${pad2(now2.getHours())}${pad2(now2.getMinutes())}${pad2(now2.getSeconds())}`;
+    const filename = `clip_${ts2}.mp4`;
 
     const file = new File([blob], filename, { type: 'video/mp4' });
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
