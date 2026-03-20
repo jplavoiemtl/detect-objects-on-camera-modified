@@ -14,8 +14,16 @@ try:
     import piexif  # type: ignore
     _HAS_PIEXIF = True
 except ImportError:
-    _HAS_PIEXIF = False
-    print("[CAPTURE] piexif not available — EXIF metadata will not be injected")
+    print("[CAPTURE] piexif not found — attempting install...")
+    try:
+        import subprocess
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "piexif"], stdout=subprocess.DEVNULL)
+        import piexif  # type: ignore
+        _HAS_PIEXIF = True
+        print("[CAPTURE] piexif installed successfully")
+    except Exception as e:
+        _HAS_PIEXIF = False
+        print(f"[CAPTURE] piexif install failed: {e} — EXIF metadata will not be injected")
 
 # Suppress the "websocket-client package not installed" warning from socketio
 warnings.filterwarnings('ignore', message='.*websocket-client.*')
