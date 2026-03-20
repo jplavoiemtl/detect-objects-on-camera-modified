@@ -10,6 +10,12 @@ from typing import List, Optional, Tuple
 
 import cv2  # type: ignore
 import numpy as np  # type: ignore
+try:
+    import piexif  # type: ignore
+    _HAS_PIEXIF = True
+except ImportError:
+    _HAS_PIEXIF = False
+    print("[CAPTURE] piexif not available — EXIF metadata will not be injected")
 
 # Suppress the "websocket-client package not installed" warning from socketio
 warnings.filterwarnings('ignore', message='.*websocket-client.*')
@@ -571,13 +577,39 @@ def get_stream_status():
     return {"connected": _sio_connected, "frame_age": frame_age}
 
 
+def _inject_exif_datetime(filepath, dt):
+    """Inject EXIF DateTimeOriginal into a JPEG file on disk."""
+    if not _HAS_PIEXIF:
+        return
+    try:
+        exif_dt = dt.strftime("%Y:%m:%d %H:%M:%S")
+        exif_dict = {"Exif": {piexif.ExifIFD.DateTimeOriginal: exif_dt}}
+        piexif.insert(piexif.dump(exif_dict), filepath)
+    except Exception as e:
+        print(f"[CAPTURE] EXIF injection failed: {e}")
+
+
+def _inject_exif_bytes(jpeg_bytes, dt):
+    """Inject EXIF DateTimeOriginal into JPEG bytes, return modified bytes."""
+    if not _HAS_PIEXIF:
+        return jpeg_bytes
+    try:
+        exif_dt = dt.strftime("%Y:%m:%d %H:%M:%S")
+        exif_dict = {"Exif": {piexif.ExifIFD.DateTimeOriginal: exif_dt}}
+        return piexif.insert(piexif.dump(exif_dict), jpeg_bytes)
+    except Exception:
+        return jpeg_bytes
+
+
 def get_snapshot_jpeg():
     """Return the current frame as a base64-encoded JPEG, or None if unavailable."""
     frame = capture_frame()
     if frame is None:
         return None
     _, buf = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
-    return base64.b64encode(buf).decode('ascii')
+    # Inject EXIF DateTimeOriginal so iOS Photos shows correct timestamp
+    jpeg_bytes = _inject_exif_bytes(bytes(buf), datetime.now())
+    return base64.b64encode(jpeg_bytes).decode('ascii')
 
 
 def capture_and_save_detection(
@@ -611,9 +643,11 @@ def capture_and_save_detection(
     )
 
     # Generate timestamped filename using local timezone
+    # Suffix is confidence × 10 (e.g. 75.3% → 753) instead of detection ID
     now = datetime.now(timezone)
     timestamp_str = now.strftime("%Y%m%d_%H%M%S")
-    filename = f"detection_{timestamp_str}_{next_detection_id:03d}.jpg"
+    conf_suffix = int(round(confidence * 1000))
+    filename = f"detection_{timestamp_str}_{conf_suffix:03d}.jpg"
     filepath = os.path.join(IMAGES_DIR, filename)
 
     # Draw bounding box if provided
@@ -626,6 +660,8 @@ def capture_and_save_detection(
     # Save image
     try:
         cv2.imwrite(filepath, frame)
+        # Inject EXIF metadata (DateTimeOriginal) so iOS Photos shows correct date
+        _inject_exif_datetime(filepath, now)
     except Exception as e:
         print(f"[CAPTURE] Failed to save image: {e}")
         return None, next_detection_id

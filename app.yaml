@@ -11,6 +11,7 @@ dependencies:
     - websocket-client
     - pytz
     - requests
+    - piexif
 
 bricks:
 - arduino:video_object_detection: {}
