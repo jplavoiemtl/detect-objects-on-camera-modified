@@ -12,7 +12,7 @@ The app saves still JPEG images on detection. We tested whether the Arduino UNO 
 - Files saved to `assets/videos/` (accessible via Samba share)
 - Typical clip: 75 frames, ~8.5s, ~9fps, ~2.5 MB
 
-**Next step**: UI integration — see `video_playback_ui_plan.md`
+**Next step**: UI integration — see `video_playback_ui_plan.md` (completed)
 
 ## Codec Test Results
 

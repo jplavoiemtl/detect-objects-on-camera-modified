@@ -108,3 +108,42 @@ The frontend uses `<source>` elements so each browser picks the format it suppor
 | **Total** | | **~163 MB** |
 
 With 2.4 GB free, this uses ~7% of available space.
+
+## Additional Features (completed 2026-03-20)
+
+### Pinch-to-zoom and mouse wheel zoom for video playback
+- Same zoom behavior as still images applied to `<video>` element
+- CSS custom properties `--pan-x`, `--pan-y`, `--zoom-scale` with `transform: translate3d() scale()`
+
+### Live video clip capture
+- Film strip button in live view records 10 seconds of fresh footage (forward-only, no pre-buffer)
+- Video written to temp file, read as base64, deleted, delivered via WebSocket (`video_clip` event)
+- No file left on disk — immediate download on the client
+
+### EXIF metadata injection
+- `piexif` library injects `DateTimeOriginal` into detection images and live snapshots
+- iOS Photos now shows correct capture time instead of download time
+- Soft import — app continues without EXIF if `piexif` is unavailable
+- Note: `piexif` must be installed manually in the container (`docker exec ... pip install piexif`); `app.yaml` dependency entry does not trigger install on subsequent deploys
+
+### Filename format changes
+- Detection images: `detection_YYYYMMDD_HHMMSS_CCC.jpg` where `CCC` is confidence × 10 (e.g., 753 for 75.3%)
+- Snapshots: `snapshot_YYYYMMDD_HHMMSS.jpg` (local time, matching detection format)
+- Live clips: `clip_YYYYMMDD_HHMMSS.mp4` (local time)
+
+## Known Issues
+
+### Stale frames after Socket.IO reconnection
+
+**Symptom:** Live video clips recorded shortly after a Socket.IO reconnect may contain several seconds of old footage at the beginning, even though the clip was requested after the reconnect completed.
+
+**Root cause:** After a reconnect, the video runner appears to dump a backlog of queued frames over Socket.IO. These frames arrive with fresh Python-side timestamps (from `time.time()` at receipt) but contain stale video content from before the disconnection. The live view iframe is unaffected because it receives its feed directly from the video runner's HTTP stream, which is a separate pipeline.
+
+**Evidence:**
+- When the connection is stable, clips are correct: first frame arrives ~0.01s after request, content matches real-time
+- When preceded by disconnects (`[CAPTURE] ✗ Socket.IO disconnected`), clips show ~7s of old footage followed by ~3s of current footage
+- Debug logging confirms frame timestamps are correct (10s span, proper count), but video content lags
+
+**Possible workaround:** Discard frames for a brief period (e.g., 2-3 seconds) after reconnection to flush the runner's backlog. However, this would also affect detection image captures during that window, so it needs careful consideration.
+
+**Status:** Documented, not yet fixed. The issue is intermittent and tied to the video runner's Socket.IO buffering behavior, which is outside our control.
