@@ -118,9 +118,17 @@ report `stream=connected frame_age=0.0–0.1s` continuously.
   required `fps == 0` exactly, which is why a stream delivering frames in bursts
   between outages logged nothing for two months.
 
-**`CLAUDE.md`** — cron-job instructions replaced with an explicit warning; the
-incorrect claim that the built-in healthcheck is "broken" for probing port 5050
-is corrected (5050 is the GStreamer camera-input listener, a real service).
+**`CLAUDE.md`** — cron-job instructions replaced with an explicit warning, plus a
+section on why the container's built-in healthcheck must not be trusted.
+
+> **Corrected 2026-08-13.** An earlier revision of this document claimed the
+> built-in healthcheck was fine because port 5050 is a real GStreamer listener.
+> That is wrong. GStreamer listens on 5050 only until the camera connects, then
+> accepts and stops listening, so the healthcheck's `grep ' 0A '` (LISTEN) never
+> matches again. Measured on a healthy runner: port 5050 in state `01`
+> (ESTABLISHED) only, failing streak 15533. The container reads `unhealthy` for
+> its entire life while working perfectly. The March 2026 diagnosis in commit
+> `1abba7a` was right.
 
 ## 5. Verification
 

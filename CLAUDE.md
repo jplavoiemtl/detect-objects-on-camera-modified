@@ -167,11 +167,28 @@ Two lessons encoded here:
   or `nc`. Port 4912 is published on the host, so any future check should test it
   from the host (`bash -c '</dev/tcp/127.0.0.1/4912'`) rather than via `docker exec`.
 
-Also note: the container's built-in healthcheck probes port **5050**, which is a
-real listener — the GStreamer TCP server that accepts the camera feed
-(`[GST] In tcp server mode, waiting on 0.0.0.0:5050 for a connection`). An earlier
-version of this file wrongly called that healthcheck "broken", which is what
-motivated the cron job in the first place.
+### The built-in healthcheck is a permanent false negative
+
+Do **not** use `docker`'s health status for this container. Its healthcheck is:
+
+```bash
+grep -i ':13BA' /proc/net/tcp | grep ' 0A ' || exit 1   # port 5050, state LISTEN
+```
+
+GStreamer's TCP server listens on 5050 only until the camera connects
+(`[GST] In tcp server mode, waiting on 0.0.0.0:5050 for a connection`), then
+accepts and **stops listening**. Verified 2026-08-13 on a runner serving a clean
+10 fps: port 5050 had only an `01` (ESTABLISHED) socket and no `0A` (LISTEN) one,
+giving a failing streak of 15533 — every probe since boot.
+
+So the container reads `unhealthy` permanently while working perfectly. The
+first cron watchdog (Jan–Mar 2026, commit `d380c87`) filtered on
+`health=unhealthy` and therefore also restarted the runner every 2 minutes,
+for seven weeks, until `1abba7a` replaced it. That is two watchdogs seven months
+apart, both defeated by trusting a signal that fails open.
+
+Port 4912 is the real service port and does hold a `0A` listener — check that
+one, from the host, as above.
 
 ## Environment Variables
 
