@@ -19,7 +19,9 @@ import numpy as np
 # --------------- Configuration ---------------
 BUFFER_SECONDS = 2          # seconds of video before detection
 POST_SECONDS = 8            # seconds of video after detection
-MAX_FPS_ESTIMATE = 15       # ceiling for deque maxlen calculation
+MAX_FPS_ESTIMATE = 30       # safety cap on buffer size; age is the real bound
+MAX_STREAM_GAP = 2.0        # a larger gap between frames means the stream dropped
+FINALIZE_GRACE = 2.0        # seconds past the post deadline before forcing a write
 VIDEOS_DIR = os.path.join("assets", "videos")
 
 # --------------- Overlay ---------------
@@ -35,11 +37,20 @@ _recording_filepath = None  # filepath for the current recording
 _recording_callback = None  # optional callback for clip capture
 _lock = threading.Lock()
 _current_overlay = None     # (bbox_xyxy, label, confidence, timestamp)
+_watchdog_started = False
 
 
 def init():
-    """Create videos directory if needed."""
+    """Create videos directory if needed and start the finalize watchdog."""
+    global _watchdog_started
     os.makedirs(VIDEOS_DIR, exist_ok=True)
+    if not _watchdog_started:
+        _watchdog_started = True
+        threading.Thread(
+            target=_finalize_watchdog,
+            daemon=True,
+            name="video-finalize-watchdog",
+        ).start()
     print(f"[VIDEO] Recorder initialized — buffer={BUFFER_SECONDS}s, post={POST_SECONDS}s, dir={VIDEOS_DIR}")
 
 
@@ -65,6 +76,13 @@ def buffer_frame(jpeg_bytes):
 
     with _lock:
         _buffer.append(entry)
+
+        # Bound the pre-buffer by age, not frame count. A frame-count bound
+        # stretches with the stream: 30 frames at 1 fps span 30s of wall clock,
+        # which is what produced 34s and 42s clips during stream outages.
+        cutoff = now - BUFFER_SECONDS
+        while _buffer and _buffer[0][0] < cutoff:
+            _buffer.popleft()
 
         # If we're in post-recording phase, also collect into _post_frames
         if _recording_active:
@@ -139,6 +157,36 @@ def capture_clip(callback):
     print(f"[VIDEO] Manual clip started — recording 10s from now")
 
 
+def _trim_to_contiguous(frames):
+    """Drop every frame before the last stream outage.
+
+    A gap wider than MAX_STREAM_GAP means the video stream dropped. Frames from
+    before the gap are stale, and splicing across it gives the clip a timespan
+    far longer than it should have — the whole clip then plays back at the wrong
+    speed. Better a short, correct clip than a long, spliced one.
+    """
+    cut = 0
+    for i in range(1, len(frames)):
+        if frames[i][0] - frames[i - 1][0] > MAX_STREAM_GAP:
+            cut = i
+    return frames[cut:] if cut else frames
+
+
+def _finalize_watchdog():
+    """Force a write when the post window elapses without a closing frame.
+
+    _finalize_recording() normally runs from buffer_frame(), so if the stream
+    stalls right after a trigger nothing ever closes the clip: _recording_active
+    stays True and silently blocks every future recording.
+    """
+    while True:
+        time.sleep(1.0)
+        with _lock:
+            if _recording_active and time.time() >= _post_deadline + FINALIZE_GRACE:
+                print("[VIDEO] Post window elapsed with no frames — finalizing")
+                _finalize_recording()
+
+
 def _finalize_recording():
     """Called with _lock held when post-collection is complete."""
     global _recording_active, _pre_frames, _post_frames, _recording_filepath, _recording_callback
@@ -148,6 +196,12 @@ def _finalize_recording():
     n_pre = len(_pre_frames)
     n_post = len(_post_frames)
     combined = list(_pre_frames) + list(_post_frames)
+
+    # Never encode across a stream outage
+    trimmed = _trim_to_contiguous(combined)
+    if len(trimmed) != len(combined):
+        print(f"[VIDEO] Stream gap detected — dropped {len(combined) - len(trimmed)} stale frames")
+        combined = trimmed
 
     # DEBUG: frame timing analysis
     clip_start_time = _post_deadline - 10 if n_pre == 0 else _post_deadline - POST_SECONDS

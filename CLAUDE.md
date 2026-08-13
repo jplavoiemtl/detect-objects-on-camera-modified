@@ -47,13 +47,14 @@ Access the web UI at `<board-hostname>.local:7000` (e.g., `arduino-q.local:7000`
 - `mqtt_client.py` - MQTT client for publishing detection events and device status
 - `mqtt_secrets.py` - MQTT credentials (broker IP, port, username, password, client ID)
 - `persistence.py` - Detection history storage in `data/imageslist.log` (JSON lines), image rotation, and persistent settings (`data/settings.json`) with debounced atomic writes
-- `health_monitor.py` - Watchdog that monitors MQTT connectivity and attempts device reboot if MQTT is down for 5 minutes
+- `health_monitor.py` - Watchdog that monitors MQTT connectivity and attempts device reboot if MQTT is down for 5 minutes. Also provides `restart_video_runner_container()`, used by `capture.py` after a sustained stream outage
 - `ui_handlers.py` - WebSocket event handlers for frontend communication
+- `video_recorder.py` - Circular JPEG pre-buffer plus MP4/WebM clip writer for detection videos. The pre-buffer is bounded by **age**, not frame count, and clips are never encoded across a stream outage (see `_trim_to_contiguous`) — both guard against the clip-duration failure documented in `project_plans/video_clip_duration_fix.md`
 
 **Arduino App Bricks Used:**
 
 - `WebUI` - Hosts the web interface and Socket.IO transport
-- `VideoObjectDetection` - Runs YOLO-based object detection on video frames. Uses `on_detect_all` callback which sends all detections regardless of confidence. Detection values are wrapped in a list of dicts (firmware change). Python-side threshold filtering is applied in `inner_main.py`
+- `VideoObjectDetection` - Runs YOLO-based object detection on video frames. Uses `on_detect_all` callback which sends all detections regardless of confidence. Python-side threshold filtering is applied in `inner_main.py`. **Payload conventions changed with the App Lab SDK update** — two separate changes: (1) detection values are wrapped in a list of dicts, and (2) `bounding_box_xyxy` is now in **source-frame pixels** (640x480), where it was previously model-input space (416x416). The raw bbox is also what gets published to MQTT in `inner_main.py`, so those coordinates changed units too
 - `Bridge` - Controls hardware (LED state, animations)
 
 ### Frontend (assets/)
@@ -70,13 +71,22 @@ In `inner_main.py`:
 - `_DEFAULT_CONFIDENCE = 0.6` - Default detection threshold (overridden by `data/settings.json` if present)
 - `_DEFAULT_LABEL = "bottle"` - Default target object label (overridden by `data/settings.json` if present)
 - `LOCAL_TIMEZONE = 'America/Montreal'` - Timestamp timezone
+- `LOW_FPS_WARN = 5.0` - Stream fps below this logs a `[STREAM]` warning. A degraded stream must be loud; the previous check only fired at exactly 0 fps and stayed silent for two months
 
 In `capture.py`:
 
 - `VIDEO_STREAM_PORT = 4912` - Video runner Socket.IO port
 - `VIDEO_WS_HOST = "ei-video-obj-detection-runner"` - Video runner Docker hostname
-- `MODEL_INPUT_SIZE = 416` - YOLO input dimensions for bbox scaling
+- `MODEL_INPUT_SIZE = 416` - YOLO input dimensions. **No longer used for bbox scaling** — the brick reports frame-space pixels, so `scale_bbox_to_frame()` passes them through unchanged. Do not reintroduce magnitude-based guessing between model space and frame space; the two ranges overlap and the guess is wrong ~half the time (see `project_plans/bbox_coordinate_space_fix.md`)
 - `FRESH_RETRY_TOTAL = 5.0` - Seconds to retry frame capture during detection save (triggers immediate reconnect if disconnected)
+
+In `video_recorder.py`:
+
+- `BUFFER_SECONDS = 2` - Seconds of pre-detection footage, enforced by frame **age**
+- `POST_SECONDS = 8` - Seconds of post-detection footage
+- `MAX_FPS_ESTIMATE = 30` - Safety cap on buffer length only; not the eviction policy
+- `MAX_STREAM_GAP = 2.0` - Frames spaced wider than this mark a stream outage; everything before the last such gap is dropped rather than spliced into the clip
+- `FINALIZE_GRACE = 2.0` - Seconds past the post deadline before the watchdog thread forces the write (a stalled stream must not leave `_recording_active` stuck True)
 
 In `persistence.py`:
 
@@ -116,28 +126,15 @@ The app runs as two Docker containers managed by Arduino App Lab:
 
 ### Video Runner Recovery
 
-The video runner can get stuck in a crash loop (GStreamer failures). When this happens:
+The video runner can get stuck (GStreamer failures). When this happens:
 
-- Container shows as `(unhealthy)` in `docker ps`
 - WebSocket connections fail with "did not receive a valid HTTP response"
 - The `VideoObjectDetection` brick fails to connect
 
-**Automatic recovery via host cron job**: The main app container is sandboxed and cannot restart sibling containers. Instead, a cron job runs on the Arduino UNO Q host every 2 minutes to verify the video runner is listening on port 4912 and restarts it if not:
-
-```bash
-# Installed on host via: ssh arduino@arduino-q.local
-# View with: crontab -l
-*/2 * * * * docker exec detect-objects-on-camera-modified-ei-video-obj-detection-runner-1 netstat -tuln | grep -q :4912 || docker restart detect-objects-on-camera-modified-ei-video-obj-detection-runner-1 >> /tmp/video_restart.log 2>&1
-```
-
-**Note**: The container's built-in Docker healthcheck (`netstat -tuln | grep :5050`) is broken — it checks port 5050 (TCP camera input, not a persistent listener) instead of port 4912 (the actual service port). This causes the container to always show as `(unhealthy)` despite working correctly. The cron job above uses the correct port check and does not rely on Docker's health status. The main app's Socket.IO reconnection logic (`capture.py`) automatically reconnects once the container recovers.
-
-To install/replace the cron job:
-
-```bash
-crontab -r
-(crontab -l 2>/dev/null; echo '*/2 * * * * docker exec detect-objects-on-camera-modified-ei-video-obj-detection-runner-1 netstat -tuln | grep -q :4912 || docker restart detect-objects-on-camera-modified-ei-video-obj-detection-runner-1 >> /tmp/video_restart.log 2>&1') | crontab -
-```
+**Recovery is handled in-app.** `capture.py` detects a sustained outage and calls
+`restart_video_runner_container()` (`health_monitor.py`) after `WATCHDOG_MAX_OFFLINE`
+(300s) of no connection, restarting the runner via the Docker Unix socket. Its
+Socket.IO client then reconnects automatically.
 
 **Manual recovery:**
 
@@ -145,11 +142,36 @@ crontab -r
 docker restart detect-objects-on-camera-modified-ei-video-obj-detection-runner-1
 ```
 
-**Check restart log:**
+#### ⚠️ Do not install a host cron watchdog
+
+Earlier versions of this file documented a cron job that ran every 2 minutes:
 
 ```bash
-cat /tmp/video_restart.log
+# REMOVED 2026-08-12 — DO NOT REINSTATE IN THIS FORM
+*/2 * * * * docker exec ...-runner-1 netstat -tuln | grep -q :4912 || docker restart ...-runner-1
 ```
+
+After the Arduino App Lab update to brick assets `0.11.0`, `netstat` was no longer
+present in the runner image, so `docker exec` exited 126 and the `||` branch fired
+**every single time**. It restarted a perfectly healthy runner 720 times a day
+(1461 consecutive restarts were recorded over one 2-day uptime), taking the video
+stream down for ~28s out of every 120s. This corrupted detection clips — see
+`project_plans/video_clip_duration_fix.md` for the full investigation.
+
+Two lessons encoded here:
+
+- A health check whose *failure mode* is indistinguishable from an unhealthy
+  target is worse than no health check. `||` fires on any non-zero exit,
+  including "command not found".
+- The runner image ships `curl`, `wget` and `python3` but **no** `netstat`, `ss`,
+  or `nc`. Port 4912 is published on the host, so any future check should test it
+  from the host (`bash -c '</dev/tcp/127.0.0.1/4912'`) rather than via `docker exec`.
+
+Also note: the container's built-in healthcheck probes port **5050**, which is a
+real listener — the GStreamer TCP server that accepts the camera feed
+(`[GST] In tcp server mode, waiting on 0.0.0.0:5050 for a connection`). An earlier
+version of this file wrongly called that healthcheck "broken", which is what
+motivated the cron job in the first place.
 
 ## Environment Variables
 

@@ -144,10 +144,14 @@ def _setup_socketio():
 
         @_sio_client.event
         def disconnect():
-            global _sio_connected, _disconnects_in_window, _last_disconnect_time
+            global _sio_connected, _disconnects_in_window, _last_disconnect_time, _last_connect_attempt
             was_connected = _sio_connected
             _sio_connected = False
             now = time.time()
+            # Start the retry clock now. Otherwise the reconnect loop fires
+            # instantly against a server that is still down, wasting attempt #1
+            # and doubling the backoff before recovery is even possible.
+            _last_connect_attempt = now
             with _stats_lock:
                 _disconnects_in_window += 1
                 _last_disconnect_time = now
@@ -264,7 +268,13 @@ def _connect_socketio():
 
         try:
             _sio_client.connect(_video_url, wait_timeout=5)
-            time.sleep(0.5)
+
+            # Wait for the connect event to land rather than assuming 0.5s is
+            # enough — under load on the board a good connection could be torn
+            # down here just for reporting itself late.
+            connect_deadline = time.time() + 3.0
+            while not _sio_connected and time.time() < connect_deadline:
+                time.sleep(0.1)
 
             if _sio_connected:
                 if should_log:
@@ -359,7 +369,9 @@ def _reconnect_loop():
     global _sio_initialized, _last_connect_attempt, _sio_connected
     
     current_wait = _reconnect_interval
-    max_wait = 60.0
+    # Capped well below the old 60s: the runner recovers in ~15s, and a long
+    # backoff left the capture path dark long after detections had resumed.
+    max_wait = 20.0
     disconnect_start_time = None
     
     while True:
@@ -485,12 +497,23 @@ def scale_bbox_to_frame(
     frame_shape: Optional[Tuple[int, int, int]],
     model_input_size: int = MODEL_INPUT_SIZE,
 ) -> Optional[List[float]]:
-    """Scale bbox coordinates to the captured frame, handling normalization and letterboxing.
+    """Scale bbox coordinates to the captured frame.
 
-    Supports three cases:
+    Supports two cases:
     - Normalized [0,1] coordinates
-    - Pixel coordinates in the model's square input size (with possible letterboxing)
-    - Pixel coordinates already in frame space
+    - Pixel coordinates already in frame space (what the brick sends)
+
+    There used to be a third case that treated any coordinate below
+    `model_input_size` as model-space and undid a 416x416 letterbox. That guess
+    is unsound: the two spaces overlap, so a genuine frame-space box in the
+    upper-left of a 640x480 frame is indistinguishable from a model-space box.
+    After the App Lab SDK update the brick reports frame pixels, and the guess
+    silently corrupted every detection whose coordinates all fell under 416 —
+    shifting the box right by 1/0.65 and stretching it to the bottom edge, while
+    detections extending past 416 rendered correctly. See
+    `project_plans/bbox_coordinate_space_fix.md`.
+
+    `model_input_size` is retained for signature compatibility and is unused.
     """
     if not bbox_xyxy or frame_shape is None or len(frame_shape) < 2:
         return None
@@ -515,18 +538,7 @@ def scale_bbox_to_frame(
     if 0 <= max_coord <= 1.0 + epsilon:
         x1, x2 = x1 * w, x2 * w
         y1, y2 = y1 * h, y2 * h
-    # Model-space coordinates (e.g., 416x416) with possible letterboxing
-    elif max_coord <= model_input_size + epsilon:
-        scale = min(model_input_size / w, model_input_size / h)
-        scaled_w = w * scale
-        scaled_h = h * scale
-        pad_x = (model_input_size - scaled_w) / 2.0
-        pad_y = (model_input_size - scaled_h) / 2.0
-        x1 = (x1 - pad_x) / scale
-        x2 = (x2 - pad_x) / scale
-        y1 = (y1 - pad_y) / scale
-        y2 = (y2 - pad_y) / scale
-    # Else: assume already in frame pixel space
+    # Else: already in frame pixel space — use as-is
 
     # Clamp and validate
     x1 = max(0.0, min(w - 1, x1))

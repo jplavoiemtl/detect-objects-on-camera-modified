@@ -138,20 +138,29 @@ start_capture_reconnect_daemon()
 video_recorder.init()
 
 # ================= STREAM HEALTH BROADCAST =================
-STREAM_HEALTH_INTERVAL = 10  # seconds between health broadcasts
+STREAM_HEALTH_INTERVAL = 10   # seconds between health broadcasts
+LOW_FPS_WARN = 5.0            # below this the stream is degraded, not healthy
+ROUTINE_LOG_EVERY = 30        # cycles between routine lines (~5 min)
 
 def stream_health_loop():
     """Periodically broadcast stream health stats to the UI and log significant issues."""
+    cycles = 0
     while True:
         time.sleep(STREAM_HEALTH_INTERVAL)
         health = get_stream_health()
         emit_stream_health(ui, health)
+        cycles += 1
 
-        # Log to console when there are issues worth noting
-        if health["disconnects"] > 0:
-            print(f"[STREAM] disconnects={health['disconnects']} fps={health['fps']} max_gap={health['max_gap']}s uptime={health['uptime']}s")
-        elif health["connected"] and health["fps"] == 0 and health["frame_age"] is not None and health["frame_age"] > 5:
-            print(f"[STREAM] No frames received (age={health['frame_age']}s, connected={health['connected']})")
+        # Log any degraded stream, not just a fully dead one. The previous
+        # condition required fps == 0 exactly, so a stream delivering frames in
+        # bursts between outages logged nothing at all for two months.
+        degraded = health["disconnects"] > 0 or (health["connected"] and health["fps"] < LOW_FPS_WARN)
+        if degraded or cycles % ROUTINE_LOG_EVERY == 0:
+            print(
+                f"[STREAM] fps={health['fps']} disconnects={health['disconnects']} "
+                f"max_gap={health['max_gap']}s frame_age={health['frame_age']}s "
+                f"uptime={health['uptime']}s connected={health['connected']}"
+            )
 
 threading.Thread(target=stream_health_loop, daemon=True).start()
 
