@@ -54,7 +54,6 @@ from persistence import (
     delete_oldest_detection,
     save_detection_to_log,
 )
-from health_monitor import restart_video_runner_container
 
 # Use environment variables if available, otherwise defaults
 VIDEO_STREAM_PORT = int(os.environ.get("VIDEO_RUNNER_PORT", 4912))
@@ -97,7 +96,12 @@ FRESH_RETRY_SLEEP = 0.1    # seconds
 # If no fresh frame arrives for this long while "connected", force reconnect
 STALE_RECONNECT_AGE = 30.0  # seconds (increased from 15.0 for stability)
 STALE_CHECK_INTERVAL = 5.0  # seconds
-WATCHDOG_MAX_OFFLINE = 300.0 # 5 minutes max offline time before self-restart
+# Seconds offline before the stream outage is called sustained. This app CANNOT
+# restart the runner -- the container has no Docker socket, CLI or API (see
+# CLAUDE.md, "In-app runner restart cannot work"). Recovery is the host-side
+# tools/runner_watchdog.sh. All we do here is say so, at most once per interval.
+WATCHDOG_MAX_OFFLINE = 300.0   # seconds
+OUTAGE_LOG_INTERVAL = 300.0    # seconds between repeats of the outage warning
 
 def _setup_socketio():
     """Set up Socket.IO client for video stream."""
@@ -373,6 +377,7 @@ def _reconnect_loop():
     # backoff left the capture path dark long after detections had resumed.
     max_wait = 20.0
     disconnect_start_time = None
+    last_outage_log = 0.0
     
     while True:
         now = time.time()
@@ -383,14 +388,19 @@ def _reconnect_loop():
             # Watchdog tracking
             if disconnect_start_time is None:
                 disconnect_start_time = now
-            elif (now - disconnect_start_time) > WATCHDOG_MAX_OFFLINE:
-                print(f"[CAPTURE] Video stream unavailable for >{WATCHDOG_MAX_OFFLINE}s. Restarting video runner container...")
-                # Restart the video runner container to recover the video service
-                if restart_video_runner_container():
-                    # Reset watchdog timer to give the container time to recover
-                    disconnect_start_time = now
-                else:
-                    print(f"[CAPTURE] Container restart failed, will retry on next cycle")
+            elif ((now - disconnect_start_time) > WATCHDOG_MAX_OFFLINE
+                  and (now - last_outage_log) >= OUTAGE_LOG_INTERVAL):
+                # Say it once per interval and stop. The previous version called
+                # restart_video_runner_container() here; that call can never succeed
+                # and its unbounded retries wrote 36,087 log lines in 55 minutes on
+                # 2026-08-23, rotating away the evidence of the outage it was
+                # reacting to. Do not reintroduce a retry loop in this path.
+                last_outage_log = now
+                offline = int(now - disconnect_start_time)
+                print(f"[CAPTURE] Video stream down for {offline}s. This app cannot "
+                      f"restart the runner; recovery is tools/runner_watchdog.sh on "
+                      f"the host. If it logs BLOCKED, check `df -h /dev/shm` inside "
+                      f"the runner -- see the triage runbook in CLAUDE.md.")
 
             if (now - _last_connect_attempt) >= current_wait:
                 _sio_initialized = True
@@ -400,6 +410,7 @@ def _reconnect_loop():
                     # Reset backoff on success
                     current_wait = _reconnect_interval
                     disconnect_start_time = None # Reset watchdog
+                    last_outage_log = 0.0
                 else:
                     # Exponential backoff on failure: 5s -> 10s -> 20s -> 40s -> 60s
                     current_wait = min(current_wait * 2, max_wait)

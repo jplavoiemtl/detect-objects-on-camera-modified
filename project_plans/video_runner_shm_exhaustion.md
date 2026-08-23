@@ -146,10 +146,11 @@ not survive an SDK update.
    fixable in this repo. If a fix ships, the memory-growth figures here
    (~200 MB → 938 MB over 10 days) are the baseline to re-measure against.
 
-3. **`restart_video_runner_container()` — NOT yet removed.** It still cannot work and
-   still floods the log. Now documented in `CLAUDE.md` so its output is recognised as
-   noise rather than a new fault, but the flood remains a hazard: it is what rotated
-   away the evidence of this failure.
+3. **`restart_video_runner_container()` — DONE, removed 2026-08-23.** Deleted with
+   its Unix-socket and host-API helpers (~110 lines). `capture.py` still detects a
+   sustained outage but now logs it at most once per 5 minutes, naming the host
+   watchdog as the recovery path. The log flood that erased the evidence of this very
+   failure is gone. Requires an app restart to take effect on a running board.
 
 ## 9. Triage if it happens again
 

@@ -47,7 +47,7 @@ Access the web UI at `<board-hostname>.local:7000` (e.g., `arduino-q.local:7000`
 - `mqtt_client.py` - MQTT client for publishing detection events and device status
 - `mqtt_secrets.py` - MQTT credentials (broker IP, port, username, password, client ID)
 - `persistence.py` - Detection history storage in `data/imageslist.log` (JSON lines), image rotation, and persistent settings (`data/settings.json`) with debounced atomic writes
-- `health_monitor.py` - Watchdog that monitors MQTT connectivity and attempts device reboot if MQTT is down for 5 minutes. Also provides `restart_video_runner_container()`, called by `capture.py` after a sustained stream outage — **this call can never succeed**; the container has no Docker access, and its unbounded retry loop floods the log. See "In-app runner restart cannot work" below
+- `health_monitor.py` - Watchdog that monitors MQTT connectivity and attempts device reboot if MQTT is down for 5 minutes. It no longer contains any Docker/container-restart code — that was removed 2026-08-23; see "In-app runner restart cannot work" below
 - `ui_handlers.py` - WebSocket event handlers for frontend communication
 - `video_recorder.py` - Circular JPEG pre-buffer plus MP4/WebM clip writer for detection videos. The pre-buffer is bounded by **age**, not frame count, and clips are never encoded across a stream outage (see `_trim_to_contiguous`) — both guard against the clip-duration failure documented in `project_plans/video_clip_duration_fix.md`
 
@@ -79,6 +79,8 @@ In `capture.py`:
 - `VIDEO_WS_HOST = "ei-video-obj-detection-runner"` - Video runner Docker hostname
 - `MODEL_INPUT_SIZE = 416` - YOLO input dimensions. **No longer used for bbox scaling** — the brick reports frame-space pixels, so `scale_bbox_to_frame()` passes them through unchanged. Do not reintroduce magnitude-based guessing between model space and frame space; the two ranges overlap and the guess is wrong ~half the time (see `project_plans/bbox_coordinate_space_fix.md`)
 - `FRESH_RETRY_TOTAL = 5.0` - Seconds to retry frame capture during detection save (triggers immediate reconnect if disconnected)
+- `WATCHDOG_MAX_OFFLINE = 300.0` - Seconds offline before the outage is called sustained. **Logs only** — the app cannot restart the runner
+- `OUTAGE_LOG_INTERVAL = 300.0` - Minimum seconds between repeats of that warning. Deliberately rate-limited: the unbounded loop this replaced destroyed the evidence of the failure it was reacting to
 
 In `video_recorder.py`:
 
@@ -191,11 +193,12 @@ So as a **liveness** signal it is exactly inverted, and both readings are verifi
 Never restart on `health=unhealthy`. The first cron watchdog did exactly that, for
 seven weeks. Port 4912 is the real service port and holds a genuine `0A` listener.
 
-### In-app runner restart cannot work
+### In-app runner restart cannot work (code removed 2026-08-23)
 
-`health_monitor.restart_video_runner_container()` **cannot succeed and never has.**
-The main container is sandboxed with no Docker socket, no Docker CLI and no Docker
-API. Every fallback fails, every cycle:
+`health_monitor.restart_video_runner_container()` **could never succeed**, and has
+now been deleted along with its Unix-socket and host-API helpers (~110 lines). Do
+not reintroduce it. The main container is sandboxed with no Docker socket, no Docker
+CLI and no Docker API, so every fallback failed on every cycle:
 
 ```
 [HEALTH] Docker socket not found at /var/run/docker.sock
@@ -208,9 +211,14 @@ sh: 1: docker: not found
 Commit `d380c87` (2026-01-10) documented this limitation; a later revision of this
 file wrongly claimed the restart works "via the Docker Unix socket". It does not.
 
-Worse, the retry loop is unbounded: on 2026-08-23 it wrote **36,087 log lines in 55
-minutes** (3,222 of them `sh: 1: docker: not found`), rotating the main container's
-log past the point of the failure it was reacting to and destroying the evidence.
+Worse, the retry loop was unbounded: on 2026-08-23 it wrote **36,087 log lines in
+55 minutes** (3,222 of them `sh: 1: docker: not found`), rotating the main
+container's log past the point of the failure it was reacting to and destroying the
+evidence.
+
+`capture.py` still detects a sustained outage, but now only logs it, at most once per
+`OUTAGE_LOG_INTERVAL`, naming the host watchdog as the recovery path. Recovery belongs
+outside the container — that is what `tools/runner_watchdog.sh` is for.
 
 **Manual recovery:**
 
@@ -417,8 +425,10 @@ Confirmed by investigation; do not "fix" these:
 - The container reading `unhealthy` while streaming perfectly.
 - `OpenCV: FFMPEG: tag 0x30385056/'VP80' is not supported...` on every clip — WebM
   has no FourCC field, the tag is dropped and VP8 is encoded correctly.
-- `[HEALTH] ... All container restart methods failed` — expected; the call cannot
-  work. It is noise, not a new fault.
+- `[CAPTURE] Video stream down for Ns. This app cannot restart the runner...` —
+  a deliberate once-per-5-minutes notice, not a retry loop. If you instead see
+  `[HEALTH] ... All container restart methods failed`, the board is running code
+  from before 2026-08-23 and needs an app restart to pick up the current version.
 
 ## Environment Variables
 
