@@ -296,11 +296,22 @@ State and log live in `~/.local/state/runner-watchdog/`. The log self-trims to 5
 lines, deliberately: the in-app recovery loop it replaces wrote 36,087 lines in 55
 minutes and destroyed the evidence of the failure it was reacting to.
 
-Install (runs every 2 minutes):
+**Status: INSTALLED on the board since 2026-08-23**, running every 2 minutes from
+the `arduino` user's crontab. Keep this line current — a stale "not installed" note
+is exactly how the old `AGENTS.md` kept recommending a harmful cron job.
+
+Check, install, or remove:
 
 ```bash
-crontab -e
-*/2 * * * * /home/arduino/ArduinoApps/detect-objects-on-camera-modified/tools/runner_watchdog.sh
+crontab -l                      # expect exactly one runner_watchdog line
+(crontab -l 2>/dev/null; echo '*/2 * * * * /home/arduino/ArduinoApps/detect-objects-on-camera-modified/tools/runner_watchdog.sh') | crontab -
+crontab -r                      # removes ALL cron jobs for this user
+```
+
+Run it once by hand — silence and exit 0 means healthy:
+
+```bash
+/home/arduino/ArduinoApps/detect-objects-on-camera-modified/tools/runner_watchdog.sh; echo "exit=$?"
 ```
 
 Verify any behaviour without restarting anything — `WATCHDOG_DRY_RUN=1` logs the
@@ -312,6 +323,102 @@ WATCHDOG_DRY_RUN=1 WATCHDOG_PORT=59999 WATCHDOG_STATE_DIR=/tmp/wd ./tools/runner
 
 Tunable via environment: `WATCHDOG_FAIL_THRESHOLD` (3), `WATCHDOG_MAX_RESTARTS` (2),
 `WATCHDOG_PORT` (4912), `WATCHDOG_CONTAINER`, `WATCHDOG_STATE_DIR`.
+
+## Triage: "no live image in the web UI"
+
+Work top to bottom. **Do step 0 first** — the main container's log rotates
+(`max-size: 5m, max-file: 2`) and a failing app can burn through both files in under
+an hour, erasing the cause. The kernel journal survives; Docker's logs may not.
+
+**0. Grab the volatile evidence before anything else**
+
+```bash
+journalctl -k --no-pager | grep -i "oom-kill\|Out of memory"     # survives log rotation
+docker logs -t --since=2h detect-objects-on-camera-modified-main-1 > /tmp/main.log
+docker logs -t --since=2h detect-objects-on-camera-modified-ei-video-obj-detection-runner-1 > /tmp/runner.log
+```
+
+**1. What has the watchdog already seen?**
+
+```bash
+cat ~/.local/state/runner-watchdog/watchdog.log
+```
+
+Empty = it has seen nothing wrong. `BLOCKED` = it hit the 2/hour cap and gave up,
+which means restarting is not fixing the problem — go to step 4.
+
+**2. Are the containers up?**
+
+```bash
+docker ps --format '{{.Names}}  {{.Status}}' | grep detect
+```
+
+**Ignore the `(healthy)` / `(unhealthy)` field entirely** — it is inverted (see
+"readiness gate" above). `healthy` during an outage is normal and means nothing.
+
+**3. Is the runner crash-looping?**
+
+```bash
+docker logs --since=10m ...-runner-1 2>&1 | grep -c "Starting EI inference runner"
+```
+
+`0` is healthy. Anything above ~2 is a crash loop — one restart per ~10 seconds.
+
+**4. Is `/dev/shm` full?** — the known failure, see above
+
+```bash
+docker exec ...-runner-1 df -h /dev/shm
+```
+
+100% full ⇒ this is the 2026-08-23 failure. Fix without restarting anything:
+
+```bash
+docker exec ...-runner-1 sh -c 'rm -rf /dev/shm/edge-impulse-cli*'
+```
+
+**5. Was it an OOM?** (step 0 already answered this)
+
+A `global_oom` killing `node` means the runner's memory growth hit the board's
+1.7 GB ceiling. Expect it roughly every ten days of uptime. Upstream bug — reported
+to Arduino / Edge Impulse 2026-08-23; see `project_plans/video_runner_shm_exhaustion.md`.
+
+**6. Is the camera actually present?**
+
+```bash
+lsusb | grep -i camera
+journalctl -k --no-pager | grep -i "uvc\|usb 1-" | tail
+```
+
+No USB events around the failure time ⇒ the camera is **not** the problem. Remember
+the camera belongs to the **main** container, not the runner.
+
+**7. Is the brick feeding the runner?**
+
+```bash
+grep "TCP connection" /tmp/main.log | tail
+```
+
+`established` then `lost` within ~100 ms, repeatedly, means the runner is dying as
+fast as the brick connects — the runner is at fault, not the brick.
+
+**8. What does the app itself think?**
+
+```bash
+grep "\[STREAM\]" /tmp/main.log | tail -3
+```
+
+Healthy looks like `fps=10.0 disconnects=0 max_gap≈0.13s frame_age=0.0s`.
+
+### Things that are NOT bugs
+
+Confirmed by investigation; do not "fix" these:
+
+- `inner_main.py` holding an fd on `/dev/video0` — the brick owns the camera.
+- The container reading `unhealthy` while streaming perfectly.
+- `OpenCV: FFMPEG: tag 0x30385056/'VP80' is not supported...` on every clip — WebM
+  has no FourCC field, the tag is dropped and VP8 is encoded correctly.
+- `[HEALTH] ... All container restart methods failed` — expected; the call cannot
+  work. It is noise, not a new fault.
 
 ## Environment Variables
 
