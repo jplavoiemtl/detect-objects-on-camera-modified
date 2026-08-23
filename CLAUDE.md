@@ -47,14 +47,14 @@ Access the web UI at `<board-hostname>.local:7000` (e.g., `arduino-q.local:7000`
 - `mqtt_client.py` - MQTT client for publishing detection events and device status
 - `mqtt_secrets.py` - MQTT credentials (broker IP, port, username, password, client ID)
 - `persistence.py` - Detection history storage in `data/imageslist.log` (JSON lines), image rotation, and persistent settings (`data/settings.json`) with debounced atomic writes
-- `health_monitor.py` - Watchdog that monitors MQTT connectivity and attempts device reboot if MQTT is down for 5 minutes. Also provides `restart_video_runner_container()`, used by `capture.py` after a sustained stream outage
+- `health_monitor.py` - Watchdog that monitors MQTT connectivity and attempts device reboot if MQTT is down for 5 minutes. Also provides `restart_video_runner_container()`, called by `capture.py` after a sustained stream outage — **this call can never succeed**; the container has no Docker access, and its unbounded retry loop floods the log. See "In-app runner restart cannot work" below
 - `ui_handlers.py` - WebSocket event handlers for frontend communication
 - `video_recorder.py` - Circular JPEG pre-buffer plus MP4/WebM clip writer for detection videos. The pre-buffer is bounded by **age**, not frame count, and clips are never encoded across a stream outage (see `_trim_to_contiguous`) — both guard against the clip-duration failure documented in `project_plans/video_clip_duration_fix.md`
 
 **Arduino App Bricks Used:**
 
 - `WebUI` - Hosts the web interface and Socket.IO transport
-- `VideoObjectDetection` - Runs YOLO-based object detection on video frames. Uses `on_detect_all` callback which sends all detections regardless of confidence. Python-side threshold filtering is applied in `inner_main.py`. **Payload conventions changed with the App Lab SDK update** — two separate changes: (1) detection values are wrapped in a list of dicts, and (2) `bounding_box_xyxy` is now in **source-frame pixels** (640x480), where it was previously model-input space (416x416). The raw bbox is also what gets published to MQTT in `inner_main.py`, so those coordinates changed units too
+- `VideoObjectDetection` - **Opens the camera in this container** (`/dev/video0`) and pushes JPEG frames over TCP to the runner on port 5050; inference results come back over Socket.IO on 4912. See "Data flow" under Docker Architecture. Runs YOLO-based object detection on video frames. Uses `on_detect_all` callback which sends all detections regardless of confidence. Python-side threshold filtering is applied in `inner_main.py`. **Payload conventions changed with the App Lab SDK update** — two separate changes: (1) detection values are wrapped in a list of dicts, and (2) `bounding_box_xyxy` is now in **source-frame pixels** (640x480), where it was previously model-input space (416x416). The raw bbox is also what gets published to MQTT in `inner_main.py`, so those coordinates changed units too
 - `Bridge` - Controls hardware (LED state, animations)
 
 ### Frontend (assets/)
@@ -122,19 +122,95 @@ In `persistence.py`:
 The app runs as two Docker containers managed by Arduino App Lab:
 
 1. **Main container** (`detect-objects-on-camera-modified-main-1`) - Runs the Python app on port 7000
-2. **Video runner container** (`detect-objects-on-camera-modified-ei-video-obj-detection-runner-1`) - Runs the video/inference service on port 4912
+2. **Video runner container** (`detect-objects-on-camera-modified-ei-video-obj-detection-runner-1`) - Edge Impulse inference service on port 4912
 
-### Video Runner Recovery
+### Data flow — the main container owns the camera
 
-The video runner can get stuck (GStreamer failures). When this happens:
+This is the **reverse** of what earlier revisions of this file claimed. Verified
+2026-08-23 by reading the brick source inside the running container:
 
-- WebSocket connections fail with "did not receive a valid HTTP response"
-- The `VideoObjectDetection` brick fails to connect
+```
+ main container                                    runner container
+ ───────────────────────────────                   ────────────────────────────
+ VideoObjectDetection brick
+   Camera() ── opens /dev/video0
+   camera_loop() ──── JPEG frames ──TCP 5050──▶  gst tcpserversrc ! jpegdec
+                                                   └▶ yolo-x inference
+ capture.py  ◀────── Socket.IO 4912 ──────────────  serves ws/http on :4912
+```
 
-**Recovery is handled in-app.** `capture.py` detects a sustained outage and calls
-`restart_video_runner_container()` (`health_monitor.py`) after `WATCHDOG_MAX_OFFLINE`
-(300s) of no connection, restarting the runner via the Docker Unix socket. Its
-Socket.IO client then reconnects automatically.
+- `arduino/app_bricks/video_objectdetection/__init__.py:63` — `Camera()` opens
+  `/dev/video0` (set by `VIDEO_DEVICE` in `.cache/app-compose-overrides.yaml`)
+- `:183 camera_loop()` — connects to `runner:5050`, sends a priming black frame,
+  then streams JPEG frames captured from the camera
+- The runner's actual pipeline is
+  `tcpserversrc host=0.0.0.0 port=5050 ! jpegdec`. The
+  `gst-launch-1.0 v4l2src device=/dev/video0 ...` lines it prints on failure are
+  **example hints in its troubleshooting text**, not what it runs.
+
+Consequences worth remembering:
+
+- `inner_main.py` holding an open fd on `/dev/video0` is **correct and expected** —
+  it is the brick doing its job. It is not a leak.
+- The runner never touches the camera. A camera problem shows up in the **main**
+  container, not the runner.
+- Restarting the runner does not restart the camera feed.
+
+### The healthcheck is a readiness gate, not a liveness probe
+
+From the brick's compose
+(`/var/lib/arduino-app-cli/assets/0.11.0/compose/arduino/video_object_detection/brick_compose.yaml`):
+
+```yaml
+healthcheck:
+  test: ["CMD-SHELL", "grep -i ':13BA' /proc/net/tcp | grep ' 0A ' || exit 1"]
+  interval: 2s
+  retries: 25
+```
+
+Paired in the generated `app-compose.yaml` with:
+
+```yaml
+main:
+  depends_on:
+    ei-video-obj-detection-runner:
+      condition: service_healthy
+```
+
+Its job is to hold `main` back until the runner is ready to **accept** the TCP feed.
+For that purpose it is correct. It goes false the moment the feed connects, because
+a single-connection TCP server stops listening once it accepts.
+
+So as a **liveness** signal it is exactly inverted, and both readings are verified:
+
+| Runner state | Port 5050 | Docker health |
+|---|---|---|
+| Streaming normally | `01` ESTABLISHED only | `unhealthy` (failing streak 15533) |
+| Crash-looping, no feed | `0A` LISTEN, waiting | **`healthy`** |
+
+Never restart on `health=unhealthy`. The first cron watchdog did exactly that, for
+seven weeks. Port 4912 is the real service port and holds a genuine `0A` listener.
+
+### In-app runner restart cannot work
+
+`health_monitor.restart_video_runner_container()` **cannot succeed and never has.**
+The main container is sandboxed with no Docker socket, no Docker CLI and no Docker
+API. Every fallback fails, every cycle:
+
+```
+[HEALTH] Docker socket not found at /var/run/docker.sock
+[HEALTH] Docker API at 172.17.0.1:2375 failed: [Errno 111] Connection refused
+[HEALTH] Trying docker CLI as last resort...
+sh: 1: docker: not found
+[HEALTH] ✗ All container restart methods failed
+```
+
+Commit `d380c87` (2026-01-10) documented this limitation; a later revision of this
+file wrongly claimed the restart works "via the Docker Unix socket". It does not.
+
+Worse, the retry loop is unbounded: on 2026-08-23 it wrote **36,087 log lines in 55
+minutes** (3,222 of them `sh: 1: docker: not found`), rotating the main container's
+log past the point of the failure it was reacting to and destroying the evidence.
 
 **Manual recovery:**
 
@@ -142,53 +218,100 @@ Socket.IO client then reconnects automatically.
 docker restart detect-objects-on-camera-modified-ei-video-obj-detection-runner-1
 ```
 
-#### ⚠️ Do not install a host cron watchdog
+### Known failure: /dev/shm exhaustion
 
-Earlier versions of this file documented a cron job that ran every 2 minutes:
+The runner writes decoded frames to `multifilesink location=resized%05d.jpg` with a
+working directory of `/dev/shm/edge-impulse-cli*` — a **64 MB tmpfs** (Docker's
+default `ShmSize`, not overridden by the brick compose).
 
-```bash
-# REMOVED 2026-08-12 — DO NOT REINSTATE IN THIS FORM
-*/2 * * * * docker exec ...-runner-1 netstat -tuln | grep -q :4912 || docker restart ...-runner-1
-```
+If the runner is killed abnormally, its frames are left behind and the tmpfs fills.
+Every subsequent start then fails on its first write (~70 ms after accepting the
+feed) with *"GStreamer stopped before emitting any images"*, leaking one more empty
+temp dir per attempt. **The loop is self-sustaining — it never recovers on its own.**
 
-After the Arduino App Lab update to brick assets `0.11.0`, `netstat` was no longer
-present in the runner image, so `docker exec` exited 126 and the `||` branch fired
-**every single time**. It restarted a perfectly healthy runner 720 times a day
-(1461 consecutive restarts were recorded over one 2-day uptime), taking the video
-stream down for ~28s out of every 120s. This corrupted detection clips — see
-`project_plans/video_clip_duration_fix.md` for the full investigation.
-
-Two lessons encoded here:
-
-- A health check whose *failure mode* is indistinguishable from an unhealthy
-  target is worse than no health check. `||` fires on any non-zero exit,
-  including "command not found".
-- The runner image ships `curl`, `wget` and `python3` but **no** `netstat`, `ss`,
-  or `nc`. Port 4912 is published on the host, so any future check should test it
-  from the host (`bash -c '</dev/tcp/127.0.0.1/4912'`) rather than via `docker exec`.
-
-### The built-in healthcheck is a permanent false negative
-
-Do **not** use `docker`'s health status for this container. Its healthcheck is:
+Diagnose:
 
 ```bash
-grep -i ':13BA' /proc/net/tcp | grep ' 0A ' || exit 1   # port 5050, state LISTEN
+docker exec ...-runner-1 df -h /dev/shm        # 100% full is the tell
+docker exec ...-runner-1 ls -d /dev/shm/edge-impulse-cli* | wc -l
 ```
 
-GStreamer's TCP server listens on 5050 only until the camera connects
-(`[GST] In tcp server mode, waiting on 0.0.0.0:5050 for a connection`), then
-accepts and **stops listening**. Verified 2026-08-13 on a runner serving a clean
-10 fps: port 5050 had only an `01` (ESTABLISHED) socket and no `0A` (LISTEN) one,
-giving a failing streak of 15533 — every probe since boot.
+Fix without restarting anything:
 
-So the container reads `unhealthy` permanently while working perfectly. The
-first cron watchdog (Jan–Mar 2026, commit `d380c87`) filtered on
-`health=unhealthy` and therefore also restarted the runner every 2 minutes,
-for seven weeks, until `1abba7a` replaced it. That is two watchdogs seven months
-apart, both defeated by trusting a signal that fails open.
+```bash
+docker exec ...-runner-1 sh -c 'rm -rf /dev/shm/edge-impulse-cli*'
+```
 
-Port 4912 is the real service port and does hold a `0A` listener — check that
-one, from the host, as above.
+The crash loop heals on its next cycle. Full investigation:
+`project_plans/video_runner_shm_exhaustion.md`.
+
+### Host watchdogs: two failures, and the rules for any future one
+
+Two host cron watchdogs have caused far more damage than they prevented:
+
+```bash
+# v1 — Jan 10 to Mar 1 2026 (commit d380c87) — restarted every 2 min for 7 weeks
+*/2 * * * * docker ps --filter "health=unhealthy" -q | grep -q . && docker restart ...
+
+# v2 — Mar 1 to Aug 12 2026 (commit 1abba7a) — REMOVED, DO NOT REINSTATE
+*/2 * * * * docker exec ...-runner-1 netstat -tuln | grep -q :4912 || docker restart ...
+```
+
+v1 trusted Docker health status, which is inverted (above). v2 was correct until the
+App Lab update to brick assets `0.11.0` removed `netstat` from the runner image, so
+`docker exec` exited 126 and `||` fired **every single run** — 720 restarts a day,
+~28s of downtime out of every 120s, corrupting detection clips for two months. See
+`project_plans/video_clip_duration_fix.md`.
+
+Rules for any future watchdog:
+
+- **Bound the blast radius first.** Cap restarts (e.g. 2/hour) with a cooldown and a
+  timestamped log. Both failures above were unbounded; a cap would have turned each
+  into a nuisance instead of a months-long outage.
+- **Probe port 4912 from the host** (`bash -c '</dev/tcp/127.0.0.1/4912'`). It is
+  published on the host. Never `docker exec` — the image's toolset changes without
+  warning. Never Docker health status.
+- **Require several consecutive failures** before acting. Both failures above acted
+  on a single probe.
+- **Never use `||`** with a command that can fail for reasons other than an unhealthy
+  target. `||` fires on exit 126/127 too.
+
+### The watchdog script
+
+`tools/runner_watchdog.sh` implements the rules above. It lives **in the repo**, not
+only in `crontab`, because both previous watchdogs existed solely as a crontab line
+described in a markdown file — and the description went stale while the job kept
+running. Install it from here so the code and its documentation move together.
+
+| Situation | Action |
+|---|---|
+| Port 4912 answers | Silent, exit 0 |
+| Container stopped or absent | Silent, exit 0 — a deliberate `app stop` is not a fault |
+| 1-2 consecutive failures | Log `WARN`, do nothing |
+| 3 consecutive failures | `docker restart`, record the timestamp |
+| Already 2 restarts this hour | Log `BLOCKED`, refuse — needs a human |
+| Port recovers | Log `OK`, reset the counter |
+
+State and log live in `~/.local/state/runner-watchdog/`. The log self-trims to 500
+lines, deliberately: the in-app recovery loop it replaces wrote 36,087 lines in 55
+minutes and destroyed the evidence of the failure it was reacting to.
+
+Install (runs every 2 minutes):
+
+```bash
+crontab -e
+*/2 * * * * /home/arduino/ArduinoApps/detect-objects-on-camera-modified/tools/runner_watchdog.sh
+```
+
+Verify any behaviour without restarting anything — `WATCHDOG_DRY_RUN=1` logs the
+action it would have taken, and `WATCHDOG_PORT` points the probe at a dead port:
+
+```bash
+WATCHDOG_DRY_RUN=1 WATCHDOG_PORT=59999 WATCHDOG_STATE_DIR=/tmp/wd ./tools/runner_watchdog.sh
+```
+
+Tunable via environment: `WATCHDOG_FAIL_THRESHOLD` (3), `WATCHDOG_MAX_RESTARTS` (2),
+`WATCHDOG_PORT` (4912), `WATCHDOG_CONTAINER`, `WATCHDOG_STATE_DIR`.
 
 ## Environment Variables
 
