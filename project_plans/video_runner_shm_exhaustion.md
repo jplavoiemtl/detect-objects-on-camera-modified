@@ -1,13 +1,15 @@
 # Video Runner Crash Loop — /dev/shm Exhaustion After an OOM Kill
 
-**Date:** 2026-08-23
+**Date:** 2026-08-23, recurred 2026-09-02
 **Symptom:** No live image in the web UI. Video runner restarting every ~10s for
 over two hours (~840 times). Docker reported the container as `healthy` throughout.
 **Root cause:** A global OOM kill orphaned ~1,165 JPEG frames in the runner's 64 MB
 `/dev/shm` tmpfs. With the tmpfs 100% full, every restart failed on its first frame
 write, leaking one more temp dir per attempt. Self-sustaining; no recovery possible
 without external intervention.
-**Status:** Resolved by clearing the tmpfs. Underlying runner bugs are upstream.
+**Status:** Resolved by clearing the tmpfs, twice. Underlying runner bugs are
+upstream and unfixed; the ten-day recurrence cadence is confirmed. Automatic
+recovery now works — see section 11.
 
 ---
 
@@ -21,6 +23,10 @@ without external intervention.
 | 08-23 18:45–18:47 | Orphaned GStreamer keeps writing frames until the tmpfs is 100% full |
 | 08-23 18:47:22 → 21:16 | Crash loop: ~840 restarts, each leaking one empty temp dir |
 | 08-23 21:16:30 | `rm -rf /dev/shm/edge-impulse-cli*` — recovered on the next cycle |
+| **09-02 13:18:03** | **Second global OOM kill** — `node` at 897,928 kB, 10 days later |
+| 09-02 13:18–18:14 | Identical crash loop: 1,761 leaked dirs, ~6 restarts/min, no video for 4.9h |
+| 09-02 18:14 | Noticed by the user. The watchdog log was **empty** — see section 11 |
+| 09-02 18:14:30 | `rm -rf /dev/shm/edge-impulse-cli*` — recovered on the next cycle |
 
 ## 2. Evidence
 
@@ -133,13 +139,13 @@ not survive an SDK update.
 
 ## 8. Follow-ups and their status
 
-1. **Bounded host watchdog — DONE, installed 2026-08-23.**
-   `tools/runner_watchdog.sh`, running every 2 minutes from the `arduino` crontab.
-   Probes 4912 from the host, requires 3 consecutive failures, caps restarts at
-   2/hour, ignores a deliberately stopped container. Two previous watchdogs failed
-   by being unbounded, so the cap matters more than the probe: assume the probe will
-   eventually be wrong. Log: `~/.local/state/runner-watchdog/watchdog.log` — empty is
-   healthy. A `BLOCKED` line means restarting is not fixing it and a human is needed.
+1. **Bounded host watchdog — installed 2026-08-23, FIXED 2026-09-02.**
+   `tools/runner_watchdog.sh`, every 2 minutes from the `arduino` crontab. As first
+   installed it was bounded and safe but **blind**, and did nothing at all during the
+   09-02 recurrence; see section 11. Its probe now uses HTTP and is covered by
+   `tools/test_runner_watchdog.sh`. Log: `~/.local/state/runner-watchdog/watchdog.log`
+   — empty is healthy. A `BLOCKED` line means restarting is not fixing it and a human
+   is needed.
 
 2. **Reported upstream to Arduino / Edge Impulse — 2026-08-23, by the repo owner.**
    Two bugs in `ei-models-runner:0.11.2`, both in section 7 above. Neither is
@@ -170,3 +176,47 @@ docker exec ...-runner-1 sh -c 'rm -rf /dev/shm/edge-impulse-cli*'
 Nothing in this repo prevents the OOM. With ~75 MB/day of growth on a 1.7 GB board,
 another kill is likely after roughly ten days of continuous runtime unless something
 restarts the runner in between.
+
+**Confirmed.** The second kill landed on 2026-09-02, ten days after the first, at a
+near-identical RSS (960,480 kB then; 897,928 kB now). Treat ten days of uptime as the
+expected interval until Arduino/Edge Impulse ship a fix.
+
+## 11. The watchdog was blind, and why the test missed it
+
+The watchdog installed after the first occurrence did **nothing** during the second:
+its log was empty and `consecutive_failures` read 0 across the entire 4.9-hour
+outage.
+
+Its probe was a bare TCP connect to port 4912. But `docker-proxy` holds that
+published host port for the container's whole lifetime, whatever is happening inside
+it, so the connect could never fail:
+
+```
+root 1069173  Aug23  /usr/sbin/docker-proxy -proto tcp -host-ip 0.0.0.0                      -host-port 4912 -container-ip 172.20.0.2 -container-port 4912
+```
+
+Measured during the live outage: TCP connect accepted 3/3, HTTP `curl` failed 3/3
+with *connection reset by peer*. A permanent false positive — the mirror image of
+the Docker healthcheck's permanent false negative.
+
+**The test that missed it** was `WATCHDOG_DRY_RUN=1 WATCHDOG_PORT=59999`. Port 59999
+has no `docker-proxy` in front of it, so it exercised the one condition under which
+the probe worked, and passed. The rule this earns: *a watchdog must be tested against
+a simulated failure of the real system, never against a stand-in that bypasses the
+component under suspicion.*
+
+### What was verified on 2026-09-02, by injection
+
+| Test | Old watchdog | Fixed watchdog |
+|---|---|---|
+| Offline suite (`test_runner_watchdog.sh`) | 18 pass, **1 fail** | **24 pass, 0 fail** |
+| `docker pause` (service dead, proxy up) | silent, log empty | `WARN 1/3 → WARN 2/3 → restart` |
+| `/dev/shm` filled, real crash loop | silent, log empty | `WARN → WARN → RESTART → done` |
+| Recovery after that restart | — | `frame_age=0.0s stream=connected`, ~60s |
+
+Also settled, because it had been assumed rather than tested: **`docker restart`
+does clear `/dev/shm`.** A `TESTFILL` file placed in the tmpfs was gone after a
+restart. So a plain restart is a valid remedy for this failure and the watchdog
+needs no `/dev/shm`-aware special case — clearing the tmpfs by hand is merely the
+faster, less disruptive option (one ~10s cycle, versus ~60s and a dropped
+container).

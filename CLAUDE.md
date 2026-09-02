@@ -250,12 +250,24 @@ Fix without restarting anything:
 docker exec ...-runner-1 sh -c 'rm -rf /dev/shm/edge-impulse-cli*'
 ```
 
-The crash loop heals on its next cycle. Full investigation:
-`project_plans/video_runner_shm_exhaustion.md`.
+The crash loop heals on its next cycle, with no restart and no dropped container.
 
-### Host watchdogs: two failures, and the rules for any future one
+**A `docker restart` of the runner also fixes it** — verified by injection on
+2026-09-02: the tmpfs is recreated with the container's process namespace, so
+`/dev/shm` comes back empty. It is the blunter of the two remedies (the container
+goes down and the brick spends ~40s reconnecting) but it means the watchdog's plain
+restart is a valid recovery path for this failure, and no `/dev/shm`-aware special
+case is needed in it.
 
-Two host cron watchdogs have caused far more damage than they prevented:
+**Recurred 2026-09-02**, 10 days after the first occurrence, from the same cause:
+`node` OOM-killed at 897 MB, `/dev/shm` 100% full with 1,761 leaked dirs, ~6 runner
+restarts/minute, no video for 4.9 hours. The ten-day cadence is holding. Full
+investigation: `project_plans/video_runner_shm_exhaustion.md`.
+
+### Host watchdogs: three failures, and the rules for any future one
+
+Three host cron watchdogs have failed, each differently. The first two acted when
+they should not have; the third could not act at all:
 
 ```bash
 # v1 — Jan 10 to Mar 1 2026 (commit d380c87) — restarted every 2 min for 7 weeks
@@ -263,6 +275,9 @@ Two host cron watchdogs have caused far more damage than they prevented:
 
 # v2 — Mar 1 to Aug 12 2026 (commit 1abba7a) — REMOVED, DO NOT REINSTATE
 */2 * * * * docker exec ...-runner-1 netstat -tuln | grep -q :4912 || docker restart ...
+
+# v3 — Aug 23 to Sep 2 2026 (commit 9e1187e) — bounded and safe, but BLIND
+*/2 * * * * .../tools/runner_watchdog.sh     # probed 4912 with a bare TCP connect
 ```
 
 v1 trusted Docker health status, which is inverted (above). v2 was correct until the
@@ -271,34 +286,70 @@ App Lab update to brick assets `0.11.0` removed `netstat` from the runner image,
 ~28s of downtime out of every 120s, corrupting detection clips for two months. See
 `project_plans/video_clip_duration_fix.md`.
 
+v3 was this repo's own `tools/runner_watchdog.sh`. Its escalation, cap and cooldown
+were all correct — and it never used any of them, because its probe could not fail.
+It tested port 4912 with a bare TCP connect, but **`docker-proxy` holds that host
+port for the container's entire lifetime**, regardless of whether anything inside is
+alive:
+
+```
+root 1069173  Aug23  /usr/sbin/docker-proxy -proto tcp -host-ip 0.0.0.0                      -host-port 4912 -container-ip 172.20.0.2 -container-port 4912
+```
+
+So the connect always succeeded. On 2026-09-02 the runner crash-looped for **4.9
+hours** while the watchdog log stayed completely empty. Measured during that
+outage, and again by deliberate injection afterwards:
+
+| Runner state | TCP connect to 4912 | HTTP GET to 4912 |
+|---|---|---|
+| Streaming normally | accepted | 200 |
+| Crash-looping | **accepted** | connection reset |
+| Paused (`docker pause`) | **accepted** | times out |
+
+A bare TCP connect on a published port is a permanent false **positive**, exactly as
+Docker health status is a permanent false **negative**. Both are useless as liveness
+signals, for opposite reasons.
+
 Rules for any future watchdog:
 
 - **Bound the blast radius first.** Cap restarts (e.g. 2/hour) with a cooldown and a
   timestamped log. Both failures above were unbounded; a cap would have turned each
   into a nuisance instead of a months-long outage.
-- **Probe port 4912 from the host** (`bash -c '</dev/tcp/127.0.0.1/4912'`). It is
-  published on the host. Never `docker exec` — the image's toolset changes without
-  warning. Never Docker health status.
+- **Probe port 4912 from the host with an HTTP request**
+  (`curl -sS --max-time 5 -o /dev/null http://127.0.0.1:4912/`). The probe must prove
+  the service *answers*; a bare TCP connect only proves `docker-proxy` is running and
+  is always true (that was v3). Never `docker exec` — the image's toolset changes
+  without warning. Never Docker health status.
+- **Distinguish "target is down" from "our probe broke."** Act only on curl's
+  transport failures (7, 28, 35, 52, 56). Any other exit code means curl could not do
+  its job, and must stop the watchdog rather than trigger it — reading broken tooling
+  as a sick container is exactly what turned v2 into 720 restarts a day.
 - **Require several consecutive failures** before acting. Both failures above acted
   on a single probe.
 - **Never use `||`** with a command that can fail for reasons other than an unhealthy
   target. `||` fires on exit 126/127 too.
+- **Test it against a simulated failure, not a closed port.** Every one of the three
+  failures above would have been caught before install by a test that reproduced the
+  real failure shape. v3 was "verified" with `WATCHDOG_PORT=59999` — a port with no
+  `docker-proxy` in front of it, i.e. the one condition under which its probe worked.
+  `tools/test_runner_watchdog.sh` now does this properly.
 
 ### The watchdog script
 
 `tools/runner_watchdog.sh` implements the rules above. It lives **in the repo**, not
-only in `crontab`, because both previous watchdogs existed solely as a crontab line
+only in `crontab`, because the first two watchdogs existed solely as a crontab line
 described in a markdown file — and the description went stale while the job kept
 running. Install it from here so the code and its documentation move together.
 
 | Situation | Action |
 |---|---|
-| Port 4912 answers | Silent, exit 0 |
+| Service on 4912 answers HTTP | Silent, exit 0 |
+| Probe tool itself failed | Log `ERROR`, **do nothing** — never act on a broken probe |
 | Container stopped or absent | Silent, exit 0 — a deliberate `app stop` is not a fault |
 | 1-2 consecutive failures | Log `WARN`, do nothing |
 | 3 consecutive failures | `docker restart`, record the timestamp |
 | Already 2 restarts this hour | Log `BLOCKED`, refuse — needs a human |
-| Port recovers | Log `OK`, reset the counter |
+| Service recovers | Log `OK`, reset the counter |
 
 State and log live in `~/.local/state/runner-watchdog/`. The log self-trims to 500
 lines, deliberately: the in-app recovery loop it replaces wrote 36,087 lines in 55
@@ -322,15 +373,46 @@ Run it once by hand — silence and exit 0 means healthy:
 /home/arduino/ArduinoApps/detect-objects-on-camera-modified/tools/runner_watchdog.sh; echo "exit=$?"
 ```
 
-Verify any behaviour without restarting anything — `WATCHDOG_DRY_RUN=1` logs the
-action it would have taken, and `WATCHDOG_PORT` points the probe at a dead port:
+Tunable via environment: `WATCHDOG_FAIL_THRESHOLD` (3), `WATCHDOG_MAX_RESTARTS` (2),
+`WATCHDOG_PORT` (4912), `WATCHDOG_PROBE_TIMEOUT` (5), `WATCHDOG_CONTAINER`,
+`WATCHDOG_STATE_DIR`, `WATCHDOG_DRY_RUN`.
+
+### Testing the watchdog — run the suite, never a closed port
 
 ```bash
-WATCHDOG_DRY_RUN=1 WATCHDOG_PORT=59999 WATCHDOG_STATE_DIR=/tmp/wd ./tools/runner_watchdog.sh
+./tools/test_runner_watchdog.sh          # 24 cases, no board impact, ~20s
 ```
 
-Tunable via environment: `WATCHDOG_FAIL_THRESHOLD` (3), `WATCHDOG_MAX_RESTARTS` (2),
-`WATCHDOG_PORT` (4912), `WATCHDOG_CONTAINER`, `WATCHDOG_STATE_DIR`.
+**Do not "verify" this script by pointing it at a closed port.** That is what was
+done in August 2026 (`WATCHDOG_PORT=59999`) and it passed while the watchdog was
+blind — a closed port has no `docker-proxy` in front of it, so the test avoided the
+one component that was broken.
+
+The suite reproduces the real failure shape offline, with three local listeners:
+
+| Fixture | Behaviour | Represents |
+|---|---|---|
+| `healthy` | `python3 -m http.server` — accepts + answers | a live runner |
+| `proxyonly` | accept-then-close, no HTTP | **`docker-proxy` over a dead runner** |
+| `dead` | nothing listening | container gone |
+
+Any probe that cannot tell `healthy` from `proxyonly` is not a liveness check. That
+one case is the whole reason the suite exists.
+
+It also covers escalation, the hourly cap, `BLOCKED`, recovery reset, a stopped
+container, log trimming, and — the v2 lesson — that a broken or missing probe tool
+never triggers a restart.
+
+Beyond the suite, two failures can be injected on the board itself. Both drop the
+video feed for a few minutes and both undo in one command:
+
+```bash
+# service dead, docker-proxy still listening  (undo: docker unpause)
+docker pause   ...-runner-1
+
+# the real /dev/shm exhaustion                (undo: rm, or let the watchdog restart)
+docker exec ...-runner-1 sh -c 'dd if=/dev/zero of=/dev/shm/TESTFILL bs=1M count=64'
+```
 
 ## Triage: "no live image in the web UI"
 
@@ -352,8 +434,21 @@ docker logs -t --since=2h detect-objects-on-camera-modified-ei-video-obj-detecti
 cat ~/.local/state/runner-watchdog/watchdog.log
 ```
 
-Empty = it has seen nothing wrong. `BLOCKED` = it hit the 2/hour cap and gave up,
-which means restarting is not fixing the problem — go to step 4.
+`BLOCKED` = it hit the 2/hour cap and gave up, which means restarting is not fixing
+the problem — go to step 4.
+
+An **empty log during an outage is itself a finding**, not an all-clear. It means the
+watchdog could not see the failure, which is what happened on 2026-09-02 (the probe
+could not fail; see "Host watchdogs" above). Confirm the watchdog can still tell a
+dead runner from a live one before trusting its silence:
+
+```bash
+curl -sS --max-time 5 -o /dev/null http://127.0.0.1:4912/ ; echo "http rc=$?"
+```
+
+`rc=0` with no video means the runner serves but the pipeline is broken — keep going
+down this list. A non-zero rc with an empty watchdog log means the watchdog is
+broken; run `./tools/test_runner_watchdog.sh`.
 
 **2. Are the containers up?**
 
