@@ -362,7 +362,7 @@ is exactly how the old `AGENTS.md` kept recommending a harmful cron job.
 Check, install, or remove:
 
 ```bash
-crontab -l                      # expect exactly one runner_watchdog line
+crontab -l                      # expect one runner_watchdog line (+ the runner_memlog line, see below)
 (crontab -l 2>/dev/null; echo '*/2 * * * * /home/arduino/ArduinoApps/detect-objects-on-camera-modified/tools/runner_watchdog.sh') | crontab -
 crontab -r                      # removes ALL cron jobs for this user
 ```
@@ -376,6 +376,38 @@ Run it once by hand — silence and exit 0 means healthy:
 Tunable via environment: `WATCHDOG_FAIL_THRESHOLD` (3), `WATCHDOG_MAX_RESTARTS` (2),
 `WATCHDOG_PORT` (4912), `WATCHDOG_PROBE_TIMEOUT` (5), `WATCHDOG_CONTAINER`,
 `WATCHDOG_STATE_DIR`, `WATCHDOG_DRY_RUN`.
+
+### Runner memory logger (read-only)
+
+`tools/runner_memlog.sh` appends one line every 10 minutes to
+`~/.local/state/runner-watchdog/memlog.log` (self-trims to ~31 days): `node` RSS and
+swap, host `MemAvailable` and swap used, connections on 4912 split into internal
+(main container) and external (browsers), plus the main app's Socket.IO disconnects
+and average fps over the interval. It never acts on anything.
+
+It also logs slow host-level decline, as counters cumulative since boot (diff two
+lines for a rate): `sunreclaim_mb` (unreclaimable kernel slab), `pswpin`/`pswpout`,
+`tcp_out`/`tcp_retrans` (host network namespace only — SSH/SMB, not container
+traffic) and `wlan_tx_mb`. On 2026-11-01, after 80 days of uptime, Wi-Fi throughput
+board→PC had fallen to 0.4–0.58 MB/s with a good signal (90%, 270 Mbit/s); a reboot
+restored 2.8–3.2 MB/s, and `SUnreclaim` went 114 → 42 MB. The live stream needs
+~820 KB/s, so below that the browser falls behind (~20 s live delay) and `Latest`
+slows. Which component degraded (Wi-Fi driver `ath10k_snoc` vs a kernel slab leak)
+is not yet proven.
+
+Why it exists: on 2026-11-01 the leak was ~185 MB/day (vs ~75 MB/day in August),
+watchdog restarts had shortened from every 12 to 7 to 5 days, and fps sagged from 10
+toward ~5 in the days before each restart. A hidden live iframe also keeps streaming
+~600 KB/s over the board's Wi-Fi while a saved image is shown, which pushed Wi-Fi RTT
+to 0.1–1.5 s and made `Latest` take ~0.8 s instead of ~0.3 s. The log is meant to show
+whether viewers or reconnects speed up the leak.
+
+**Status: INSTALLED on the board since 2026-11-01**, `*/10` in the `arduino` user's
+crontab, next to the watchdog line.
+
+```bash
+tail ~/.local/state/runner-watchdog/memlog.log
+```
 
 ### Testing the watchdog — run the suite, never a closed port
 
