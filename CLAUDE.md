@@ -158,10 +158,38 @@ Consequences worth remembering:
   container, not the runner.
 - Restarting the runner does not restart the camera feed.
 
+### Platform versions
+
+Updated by JP on 2026-11-05. The update stopped the app and removed its containers;
+it had to be started again with `arduino-app-cli app start`.
+
+| Component | Before (to 2026-11-05) | Now |
+|---|---|---|
+| `arduino-app-cli` / daemon | 0.12.1 | 0.14.1 |
+| `arduino-app-lab` (board) | 0.9.0 | 0.12.0 |
+| `arduino-router` | 0.9.0 | 0.11.0 |
+| `arduino-unoq-radio-firmware` | 0.6.1 | 0.7.0 |
+| Brick assets | 0.11.0 | 0.13.2 |
+| Runner image | `ei-models-runner:0.11.2` | `ei-models-runner:0.13.2` |
+| Main image | `python-apps-base:0.11.0` | `python-apps-base:0.13.2` |
+
+Verified after the 0.13.2 update: runner command and healthcheck unchanged; the
+brick still reports `bounding_box_xyxy` in source-frame pixels (a real detection gave
+`[274, 60, 357, 346]` on 640x480); clips 10.0 s at 9.5 fps; watchdog suite 24/24.
+The brick directory also has `brick_compose.ventunoq.yaml` (`ei-qnn-models-runner`,
+for VENTUNO Q); the UNO Q uses `brick_compose.yaml`. `wsaccel` is still absent from the
+main image, so `websocket-client` still validates UTF-8 in pure Python (~80% of a core
+per stream). Whether 0.13.2 fixes the runner `node` leak is to be read from the memory
+logger: before, ~85 MB/day with no browser viewer and ~200 MB/day with one.
+
+After any App Lab update, recheck: the app is running, the bbox units, clip duration,
+`./tools/test_runner_watchdog.sh`, and that `tools/runner_memlog.sh` still finds `node`.
+
 ### The healthcheck is a readiness gate, not a liveness probe
 
 From the brick's compose
-(`/var/lib/arduino-app-cli/assets/0.11.0/compose/arduino/video_object_detection/brick_compose.yaml`):
+(`/var/lib/arduino-app-cli/assets/0.13.2/compose/arduino/video_object_detection/brick_compose.yaml`;
+the directory name follows the brick assets version, see "Platform versions" below):
 
 ```yaml
 healthcheck:
