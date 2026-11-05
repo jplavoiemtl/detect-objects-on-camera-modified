@@ -114,11 +114,16 @@ def _setup_socketio():
         # Set logger=False and engineio_logger=False to keep the terminal clean
         # Configure for stable polling transport with appropriate timeouts
         # Disable auto-reconnection so we can manage the lifecycle manually ("nuclear option")
+        # skip_utf8_validation: without wsaccel (absent from the App Lab image),
+        # websocket-client checks each ~80 KB base64 frame byte by byte in pure
+        # Python -- ~80% of a core at 9.5 fps, vs 3% skipped. The peer is the
+        # local runner sending ASCII. See project_plans/websocket_utf8_cpu_fix.md
         _sio_client = socketio.Client(
             logger=False, 
             engineio_logger=False,
             reconnection=False,  # We handle reconnection manually
-            request_timeout=10   # Shorter timeout
+            request_timeout=10,  # Shorter timeout
+            websocket_extra_options={"skip_utf8_validation": True},
         )
 
         @_sio_client.event

@@ -178,12 +178,33 @@ brick still reports `bounding_box_xyxy` in source-frame pixels (a real detection
 `[274, 60, 357, 346]` on 640x480); clips 10.0 s at 9.5 fps; watchdog suite 24/24.
 The brick directory also has `brick_compose.ventunoq.yaml` (`ei-qnn-models-runner`,
 for VENTUNO Q); the UNO Q uses `brick_compose.yaml`. `wsaccel` is still absent from the
-main image, so `websocket-client` still validates UTF-8 in pure Python (~80% of a core
-per stream). Whether 0.13.2 fixes the runner `node` leak is to be read from the memory
+main image, so `capture.py` must keep `skip_utf8_validation` (see "Websocket UTF-8
+validation" below). Whether 0.13.2 fixes the runner `node` leak is to be read from the memory
 logger: before, ~85 MB/day with no browser viewer and ~200 MB/day with one.
 
 After any App Lab update, recheck: the app is running, the bbox units, clip duration,
 `./tools/test_runner_watchdog.sh`, and that `tools/runner_memlog.sh` still finds `node`.
+
+### Websocket UTF-8 validation (fixed 2026-11-05)
+
+`capture.py` creates its Socket.IO client with
+`websocket_extra_options={"skip_utf8_validation": True}`. **Do not remove it.**
+Without the compiled `wsaccel` helper (absent from `python-apps-base`), `websocket-client`
+validates each ~80 KB base64 frame byte by byte in pure Python: 85–93 ms per frame,
+~80% of a core at 9.5 fps, holding the GIL. That capped the app near 10 fps (lower with
+bigger daytime frames), delayed Socket.IO pongs and caused reconnect storms when a
+browser viewer was also connected. Likely present since `websocket-client` was added
+on 2025-12-18 (`1723a6c`).
+
+| | Before | After |
+|---|---|---|
+| Main container CPU | 102–114 % | ~26 % |
+| Load average | ~4.0 | ~2.1–2.4 |
+| `[STREAM]` | 4.5–9.5 fps, frequent disconnects | `fps=10.0 disconnects=0 max_gap=0.13s` |
+
+Safe: the peer is the local runner and base64 is ASCII; a bad frame still fails
+`b64decode`/`imdecode`, which `_process_frame_data` catches. Details and rollback:
+`project_plans/websocket_utf8_cpu_fix.md`.
 
 ### The healthcheck is a readiness gate, not a liveness probe
 
